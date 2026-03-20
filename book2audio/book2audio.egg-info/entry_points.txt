@@ -1,3 +1,0 @@
-[console_scripts]
-book2audio = book2audio.cli:main
-book2audio-web = book2audio.web.app:start

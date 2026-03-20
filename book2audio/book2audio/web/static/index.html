@@ -1,0 +1,274 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>book2audio</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Noto+Sans+JP:wght@400;500;700&family=Noto+Serif+JP:wght@700&display=swap" rel="stylesheet">
+<script src="https://cdn.tailwindcss.com"></script>
+<script>
+tailwind.config = {
+  theme: {
+    extend: {
+      colors: { primary: '#171717', cta: '#D4AF37', ctaHover: '#b8962e' },
+      fontFamily: { serif: ['Noto Serif JP', 'serif'], sans: ['Noto Sans JP', 'sans-serif'] },
+    }
+  }
+}
+</script>
+<style>
+  .progress-bar { transition: width 0.4s ease; }
+  .fade-in { animation: fadeIn 0.3s ease-out; }
+  @keyframes fadeIn { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
+  .btn-press:active { transform: scale(0.97); }
+  @keyframes shimmer {
+    0% { background-position: -200% 0; }
+    100% { background-position: 200% 0; }
+  }
+  .bar-active {
+    width: 100% !important;
+    opacity: 0.3;
+    background: linear-gradient(90deg, #D4AF37 25%, #e8cf80 50%, #D4AF37 75%);
+    background-size: 200% 100%;
+    animation: shimmer 1.5s infinite;
+  }
+</style>
+</head>
+<body class="bg-white text-primary font-sans min-h-screen">
+<div class="max-w-lg mx-auto px-4 py-10">
+
+  <!-- Header -->
+  <header class="text-center mb-10">
+    <h1 class="font-serif text-3xl font-bold tracking-tight">book2audio</h1>
+    <p class="text-sm text-gray-500 mt-1">PDF → オーディオブック変換</p>
+  </header>
+
+  <!-- Upload -->
+  <section id="upload-section">
+    <label class="block border-2 border-dashed border-gray-300 rounded-xl p-8 text-center cursor-pointer hover:border-cta transition-colors">
+      <input type="file" id="file-input" accept=".pdf" class="hidden">
+      <p id="file-label" class="text-gray-400 text-sm">PDFファイルを選択</p>
+    </label>
+
+    <!-- Settings -->
+    <details class="mt-6 border border-gray-200 rounded-xl">
+      <summary class="px-4 py-3 text-sm font-medium cursor-pointer select-none hover:bg-gray-50 rounded-xl transition-colors">設定</summary>
+      <div class="px-4 pb-4 space-y-3 text-sm">
+        <div>
+          <label class="block text-gray-500 mb-1">音声</label>
+          <select id="opt-voice" class="w-full border border-gray-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-cta/40">
+            <option value="ja-JP-NanamiNeural">Nanami（女性）</option>
+            <option value="ja-JP-KeitaNeural">Keita（男性）</option>
+          </select>
+        </div>
+        <div>
+          <label class="block text-gray-500 mb-1">速度</label>
+          <input id="opt-rate" type="text" value="+0%" class="w-full border border-gray-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-cta/40">
+        </div>
+        <div>
+          <label class="block text-gray-500 mb-1">DPI</label>
+          <input id="opt-dpi" type="number" value="300" class="w-full border border-gray-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-cta/40">
+        </div>
+        <div>
+          <label class="block text-gray-500 mb-1">ページ範囲（空=全ページ）</label>
+          <input id="opt-pages" type="text" placeholder="例: 1-10" class="w-full border border-gray-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-cta/40">
+        </div>
+        <div class="flex items-center gap-2">
+          <input id="opt-ruby" type="checkbox" checked class="accent-cta w-4 h-4">
+          <label for="opt-ruby" class="text-gray-500">ルビ除去</label>
+        </div>
+      </div>
+    </details>
+
+    <!-- Convert Button -->
+    <button id="convert-btn" disabled
+      class="mt-6 w-full bg-cta text-white font-medium py-3 rounded-xl disabled:opacity-40 disabled:cursor-not-allowed hover:bg-ctaHover transition-all btn-press">
+      変換開始
+    </button>
+  </section>
+
+  <!-- Progress -->
+  <section id="progress-section" class="hidden mt-8 fade-in">
+    <h2 class="font-medium text-sm mb-4">変換中...</h2>
+    <div class="space-y-4" id="phases"></div>
+  </section>
+
+  <!-- Download -->
+  <section id="download-section" class="hidden mt-8 fade-in">
+    <h2 class="font-medium text-sm mb-3">ダウンロード</h2>
+    <div id="file-list" class="space-y-2"></div>
+  </section>
+
+  <!-- Error -->
+  <section id="error-section" class="hidden mt-8 fade-in">
+    <div class="bg-red-50 border border-red-200 rounded-xl p-4 text-sm text-red-700">
+      <p id="error-message"></p>
+    </div>
+  </section>
+</div>
+
+<script>
+const PHASES = [
+  { key: 'pdf_to_images', label: 'PDF → 画像変換' },
+  { key: 'ocr',           label: '縦書きOCR' },
+  { key: 'text_processing', label: 'テキスト整形・章分割' },
+  { key: 'tts',           label: '音声合成' },
+];
+
+const $ = s => document.querySelector(s);
+const fileInput = $('#file-input');
+const fileLabel = $('#file-label');
+const convertBtn = $('#convert-btn');
+
+fileInput.addEventListener('change', () => {
+  const f = fileInput.files[0];
+  if (f) {
+    fileLabel.textContent = f.name;
+    fileLabel.classList.replace('text-gray-400', 'text-primary');
+    convertBtn.disabled = false;
+  }
+});
+
+convertBtn.addEventListener('click', async () => {
+  const file = fileInput.files[0];
+  if (!file) return;
+
+  convertBtn.disabled = true;
+  convertBtn.textContent = '変換中...';
+  $('#error-section').classList.add('hidden');
+  $('#download-section').classList.add('hidden');
+
+  // Build progress UI
+  const phasesEl = $('#phases');
+  phasesEl.innerHTML = '';
+  PHASES.forEach(p => {
+    phasesEl.innerHTML += `
+      <div id="phase-${p.key}" class="fade-in">
+        <div class="flex justify-between text-xs mb-1">
+          <span class="text-gray-600">${p.label}</span>
+          <span id="status-${p.key}" class="text-gray-400">待機中</span>
+        </div>
+        <div class="w-full bg-gray-100 rounded-full h-2 overflow-hidden">
+          <div id="bar-${p.key}" class="progress-bar h-full bg-cta rounded-full" style="width:0%"></div>
+        </div>
+      </div>`;
+  });
+  $('#progress-section').classList.remove('hidden');
+
+  // Send request
+  const form = new FormData();
+  form.append('file', file);
+  form.append('voice', $('#opt-voice').value);
+  form.append('rate', $('#opt-rate').value);
+  form.append('dpi', $('#opt-dpi').value);
+  form.append('pages', $('#opt-pages').value);
+  form.append('remove_ruby', $('#opt-ruby').checked);
+
+  try {
+    const res = await fetch('/api/convert', { method: 'POST', body: form });
+    const { job_id } = await res.json();
+
+    // SSE
+    const es = new EventSource(`/api/progress/${job_id}`);
+    let activePhase = null;
+
+    es.onmessage = (evt) => {
+      const d = JSON.parse(evt.data);
+
+      if (d.phase === 'done') {
+        es.close();
+        // Mark all as done
+        PHASES.forEach(p => {
+          const b = $(`#bar-${p.key}`);
+          b.classList.remove('bar-active');
+          b.style.width = '100%';
+          const st = $(`#status-${p.key}`);
+          st.textContent = '完了';
+          st.classList.replace('text-cta', 'text-green-600') || st.classList.add('text-green-600');
+          st.classList.remove('text-gray-400');
+        });
+        $('#progress-section').querySelector('h2').textContent = '変換完了';
+        convertBtn.textContent = '変換開始';
+        convertBtn.disabled = false;
+
+        // Show downloads
+        if (d.files && d.files.length) {
+          const list = $('#file-list');
+          list.innerHTML = '';
+          d.files.forEach(f => {
+            list.innerHTML += `
+              <a href="/api/download/${job_id}/${encodeURIComponent(f)}"
+                 class="flex items-center gap-3 p-3 border border-gray-200 rounded-xl hover:border-cta hover:bg-gray-50 transition-all text-sm">
+                <svg class="w-5 h-5 text-cta shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v2a2 2 0 002 2h12a2 2 0 002-2v-2M7 10l5 5 5-5M12 15V3"/>
+                </svg>
+                <span class="truncate">${f}</span>
+              </a>`;
+          });
+          $('#download-section').classList.remove('hidden');
+        }
+        return;
+      }
+
+      if (d.phase === 'error') {
+        es.close();
+        $('#error-message').textContent = d.message;
+        $('#error-section').classList.remove('hidden');
+        convertBtn.textContent = '変換開始';
+        convertBtn.disabled = false;
+        return;
+      }
+
+      // Update active phase
+      if (activePhase !== d.phase) {
+        // Mark previous as done
+        if (activePhase) {
+          const prevBar = $(`#bar-${activePhase}`);
+          prevBar.classList.remove('bar-active');
+          prevBar.style.width = '100%';
+          const prev = $(`#status-${activePhase}`);
+          prev.textContent = '完了';
+          prev.classList.remove('text-cta', 'text-gray-400');
+          prev.classList.add('text-green-600');
+        }
+        activePhase = d.phase;
+        // Add shimmer to new active phase
+        const newBar = $(`#bar-${d.phase}`);
+        if (newBar) newBar.classList.add('bar-active');
+      }
+
+      const bar = $(`#bar-${d.phase}`);
+      const status = $(`#status-${d.phase}`);
+      if (bar && status) {
+        const pct = d.total > 0 ? Math.round((d.current / d.total) * 100) : 0;
+        // Remove shimmer once real progress arrives
+        if (d.current > 0) {
+          bar.classList.remove('bar-active');
+        }
+        bar.style.width = pct + '%';
+        status.textContent = d.message;
+        status.classList.remove('text-gray-400');
+        status.classList.add('text-cta');
+      }
+    };
+
+    es.onerror = () => {
+      es.close();
+      if ($('#download-section').classList.contains('hidden')) {
+        $('#error-message').textContent = '接続が切断されました';
+        $('#error-section').classList.remove('hidden');
+        convertBtn.textContent = '変換開始';
+        convertBtn.disabled = false;
+      }
+    };
+  } catch (e) {
+    $('#error-message').textContent = e.message;
+    $('#error-section').classList.remove('hidden');
+    convertBtn.textContent = '変換開始';
+    convertBtn.disabled = false;
+  }
+});
+</script>
+</body>
+</html>

@@ -1,0 +1,13 @@
+edge-tts>=6.1
+pydub>=0.25
+click>=8.1
+tqdm>=4.65
+mutagen>=1.47
+fastapi>=0.104
+uvicorn[standard]>=0.24
+python-multipart>=0.0.6
+httpx>=0.25
+
+[dev]
+pytest>=7.0
+pytest-asyncio>=0.21

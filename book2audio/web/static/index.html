@@ -1,0 +1,1102 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="theme-color" content="#0A0A0A">
+<title>book2audio</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Noto+Sans+JP:wght@300;400;500;700&family=Noto+Serif+JP:wght@500;700&display=swap" rel="stylesheet">
+<script src="https://cdn.tailwindcss.com"></script>
+<script>
+tailwind.config = {
+  theme: {
+    extend: {
+      colors: {
+        bg: '#0A0A0A',
+        surface: '#141414',
+        surfaceHover: '#1A1A1A',
+        border: '#262626',
+        borderLight: '#333333',
+        cta: '#D4AF37',
+        ctaHover: '#E8C84A',
+        ctaDim: 'rgba(212,175,55,0.15)',
+        textPrimary: '#F5F5F5',
+        textSecondary: '#A3A3A3',
+        textMuted: '#6B6B6B',
+        success: '#22C55E',
+        error: '#EF4444',
+      },
+      fontFamily: {
+        serif: ['Noto Serif JP', 'serif'],
+        sans: ['Noto Sans JP', 'sans-serif'],
+      },
+    }
+  }
+}
+</script>
+<style>
+  * { -webkit-tap-highlight-color: transparent; touch-action: manipulation; }
+  html { background: #0A0A0A; }
+  body { overscroll-behavior: contain; }
+
+  .progress-bar { transition: width 0.4s ease; }
+  .fade-in { animation: fadeIn 0.3s ease-out; }
+  @keyframes fadeIn { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
+  .btn-press:active { transform: scale(0.96); transition: transform 0.1s; }
+
+  @keyframes shimmer {
+    0% { background-position: -200% 0; }
+    100% { background-position: 200% 0; }
+  }
+  .bar-active {
+    width: 100% !important;
+    opacity: 0.3;
+    background: linear-gradient(90deg, #D4AF37 25%, #e8cf80 50%, #D4AF37 75%);
+    background-size: 200% 100%;
+    animation: shimmer 1.5s infinite;
+  }
+
+  @keyframes pulse-glow {
+    0%, 100% { box-shadow: 0 0 0 0 rgba(212,175,55,0.4); }
+    50% { box-shadow: 0 0 0 8px rgba(212,175,55,0); }
+  }
+  .pulse-glow { animation: pulse-glow 2s ease-in-out infinite; }
+
+  @keyframes spin-slow { to { transform: rotate(360deg); } }
+
+  /* Custom range slider */
+  input[type=range] { -webkit-appearance: none; appearance: none; background: transparent; cursor: pointer; }
+  input[type=range]::-webkit-slider-runnable-track { height: 4px; border-radius: 2px; background: #262626; }
+  input[type=range]::-webkit-slider-thumb {
+    -webkit-appearance: none; width: 16px; height: 16px; border-radius: 50%;
+    background: #D4AF37; margin-top: -6px; box-shadow: 0 0 6px rgba(212,175,55,0.5);
+  }
+  input[type=range]::-moz-range-track { height: 4px; border-radius: 2px; background: #262626; border: none; }
+  input[type=range]::-moz-range-thumb {
+    width: 16px; height: 16px; border-radius: 50%; border: none;
+    background: #D4AF37; box-shadow: 0 0 6px rgba(212,175,55,0.5);
+  }
+
+  /* Seek bar progress fill */
+  .seek-container { position: relative; }
+  .seek-fill { position: absolute; top: 50%; left: 0; height: 4px; border-radius: 2px;
+    background: linear-gradient(90deg, #D4AF37, #E8C84A); transform: translateY(-50%);
+    pointer-events: none; margin-top: 0; }
+
+  /* View transitions */
+  .view { display: none; opacity: 0; transition: opacity 0.25s ease; }
+  .view.active { display: block; opacity: 1; }
+
+  /* Ring progress */
+  .ring-progress { transform: rotate(-90deg); }
+
+  /* Toast */
+  .toast {
+    position: fixed; top: 1rem; left: 50%; transform: translateX(-50%) translateY(-100%);
+    z-index: 100; transition: transform 0.3s ease; pointer-events: none;
+  }
+  .toast.show { transform: translateX(-50%) translateY(0); }
+
+  /* Modal backdrop */
+  .modal-backdrop {
+    position: fixed; inset: 0; background: rgba(0,0,0,0.7); z-index: 90;
+    display: none; align-items: center; justify-content: center; padding: 1rem;
+    backdrop-filter: blur(4px);
+  }
+  .modal-backdrop.show { display: flex; }
+
+  /* Scrollbar */
+  ::-webkit-scrollbar { width: 4px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb { background: #333; border-radius: 2px; }
+
+  /* Safe area padding */
+  .safe-bottom { padding-bottom: max(env(safe-area-inset-bottom), 0px); }
+
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after { animation-duration: 0.01ms !important; transition-duration: 0.01ms !important; }
+  }
+</style>
+</head>
+<body class="bg-bg text-textPrimary font-sans min-h-screen">
+
+<!-- Toast Notification -->
+<div id="toast" class="toast">
+  <div class="bg-surface border border-cta/30 rounded-xl px-4 py-2.5 text-sm text-cta shadow-lg shadow-cta/10">
+    <span id="toast-message"></span>
+  </div>
+</div>
+
+<!-- Modal -->
+<div id="modal" class="modal-backdrop" role="dialog" aria-modal="true">
+  <div class="bg-surface border border-border rounded-2xl p-6 w-full max-w-sm fade-in">
+    <h3 id="modal-title" class="font-serif text-lg font-bold mb-4"></h3>
+    <div id="modal-body"></div>
+    <div id="modal-actions" class="flex gap-3 mt-6"></div>
+  </div>
+</div>
+
+<!-- Main Content -->
+<div class="max-w-lg mx-auto px-4 pt-6 pb-28">
+
+  <!-- ═══════════════════════════════════════════════ -->
+  <!-- VIEW: ライブラリ -->
+  <!-- ═══════════════════════════════════════════════ -->
+  <section id="view-library" class="view">
+    <header class="text-center mb-8">
+      <h1 class="font-serif text-2xl font-bold tracking-tight">ライブラリ</h1>
+      <p class="text-xs text-textMuted mt-1">オーディオブック</p>
+    </header>
+
+    <div id="book-list" class="space-y-3"></div>
+
+    <div id="library-empty" class="hidden text-center py-16">
+      <svg class="w-16 h-16 mx-auto text-textMuted/30 mb-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5"
+          d="M12 6.042A8.967 8.967 0 006 3.75c-1.052 0-2.062.18-3 .512v14.25A8.987 8.987 0 016 18c2.305 0 4.408.867 6 2.292m0-14.25a8.966 8.966 0 016-2.292c1.052 0 2.062.18 3 .512v14.25A8.987 8.987 0 0018 18a8.967 8.967 0 00-6 2.292m0-14.25v14.25"/>
+      </svg>
+      <p class="text-textSecondary text-sm">まだ本がありません</p>
+      <p class="text-textMuted text-xs mt-1">「変換」タブからオーディオブックを作成</p>
+    </div>
+  </section>
+
+  <!-- ═══════════════════════════════════════════════ -->
+  <!-- VIEW: 変換 -->
+  <!-- ═══════════════════════════════════════════════ -->
+  <section id="view-convert" class="view">
+    <header class="text-center mb-8">
+      <h1 class="font-serif text-2xl font-bold tracking-tight">book2audio</h1>
+      <p class="text-xs text-textMuted mt-1">テキスト → オーディオブック変換</p>
+    </header>
+
+    <!-- VOICEVOX Warning -->
+    <div id="voicevox-warning" class="hidden mb-4 bg-yellow-900/20 border border-yellow-700/30 rounded-xl p-3 text-sm text-yellow-400 fade-in">
+      VOICEVOX エンジンに接続できません。起動してから再試行してください。
+    </div>
+
+    <!-- Input -->
+    <div id="input-section">
+      <textarea id="text-input" rows="8" placeholder="テキストを貼り付け..."
+        class="w-full bg-surface border border-border rounded-xl p-4 text-sm text-textPrimary placeholder-textMuted
+               focus:outline-none focus:ring-2 focus:ring-cta/30 focus:border-cta/50 resize-y transition-colors"></textarea>
+
+      <label class="mt-3 block border-2 border-dashed border-border rounded-xl p-4 text-center cursor-pointer
+                     hover:border-cta/40 transition-colors">
+        <input type="file" id="file-input" accept=".txt" class="hidden">
+        <p id="file-label" class="text-textMuted text-sm">.txt ファイルを選択</p>
+      </label>
+
+      <!-- Settings -->
+      <details class="mt-6 border border-border rounded-xl group">
+        <summary class="px-4 py-3 text-sm font-medium cursor-pointer select-none hover:bg-surfaceHover rounded-xl transition-colors text-textSecondary">
+          設定
+        </summary>
+        <div class="px-4 pb-4 space-y-3 text-sm">
+          <div>
+            <label class="block text-textMuted mb-1">バックエンド</label>
+            <select id="opt-backend"
+              class="w-full bg-surface border border-border rounded-lg px-3 py-2 text-textPrimary
+                     focus:outline-none focus:ring-2 focus:ring-cta/30">
+              <option value="edge-tts">Edge TTS (Microsoft)</option>
+              <option value="voicevox">VOICEVOX (ローカル)</option>
+            </select>
+          </div>
+          <div id="edge-voice-section">
+            <label class="block text-textMuted mb-1">音声</label>
+            <select id="opt-voice"
+              class="w-full bg-surface border border-border rounded-lg px-3 py-2 text-textPrimary
+                     focus:outline-none focus:ring-2 focus:ring-cta/30">
+              <option value="ja-JP-NanamiNeural">Nanami（女性）</option>
+              <option value="ja-JP-KeitaNeural">Keita（男性）</option>
+            </select>
+          </div>
+          <div id="voicevox-voice-section" class="hidden">
+            <label class="block text-textMuted mb-1">VOICEVOX 音声</label>
+            <select id="opt-voicevox-voice"
+              class="w-full bg-surface border border-border rounded-lg px-3 py-2 text-textPrimary
+                     focus:outline-none focus:ring-2 focus:ring-cta/30">
+              <option value="1">読み込み中...</option>
+            </select>
+          </div>
+          <div>
+            <label class="block text-textMuted mb-1">速度</label>
+            <input id="opt-rate" type="text" value="+0%"
+              class="w-full bg-surface border border-border rounded-lg px-3 py-2 text-textPrimary
+                     focus:outline-none focus:ring-2 focus:ring-cta/30">
+          </div>
+          <div class="border-t border-border pt-3 mt-3">
+            <p class="text-textMuted font-medium mb-2">音声品質</p>
+            <div>
+              <label class="block text-textMuted mb-1">段落間隔 (<span id="gap-value">600</span>ms)</label>
+              <input id="opt-paragraph-gap" type="range" min="0" max="2000" step="100" value="600" class="w-full">
+            </div>
+            <div class="mt-2 flex items-center gap-2">
+              <input id="opt-normalize" type="checkbox" checked class="accent-cta w-4 h-4">
+              <label for="opt-normalize" class="text-textMuted">音量正規化</label>
+            </div>
+          </div>
+        </div>
+      </details>
+
+      <button id="convert-btn" disabled
+        class="mt-6 w-full bg-cta text-bg font-medium py-3.5 rounded-xl
+               disabled:opacity-30 disabled:cursor-not-allowed
+               hover:bg-ctaHover transition-all btn-press text-sm">
+        変換開始
+      </button>
+    </div>
+
+    <!-- Progress -->
+    <section id="progress-section" class="hidden mt-8 fade-in">
+      <h2 class="font-medium text-sm mb-4 text-textSecondary">変換中...</h2>
+      <div class="space-y-4" id="phases"></div>
+    </section>
+
+    <!-- Download -->
+    <section id="download-section" class="hidden mt-8 fade-in">
+      <h2 class="font-medium text-sm mb-3 text-textSecondary">ダウンロード</h2>
+      <div id="file-list" class="space-y-2"></div>
+
+      <!-- Save to Library button -->
+      <button id="save-to-library-btn"
+        class="mt-4 w-full bg-cta text-bg font-medium py-3.5 rounded-xl
+               hover:bg-ctaHover transition-all btn-press text-sm flex items-center justify-center gap-2">
+        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+            d="M12 6.042A8.967 8.967 0 006 3.75c-1.052 0-2.062.18-3 .512v14.25A8.987 8.987 0 016 18c2.305 0 4.408.867 6 2.292m0-14.25a8.966 8.966 0 016-2.292c1.052 0 2.062.18 3 .512v14.25A8.987 8.987 0 0018 18a8.967 8.967 0 00-6 2.292m0-14.25v14.25"/>
+        </svg>
+        ライブラリに保存
+      </button>
+    </section>
+
+    <!-- Error -->
+    <section id="error-section" class="hidden mt-8 fade-in">
+      <div class="bg-red-900/20 border border-red-700/30 rounded-xl p-4 text-sm text-red-400">
+        <p id="error-message"></p>
+      </div>
+    </section>
+  </section>
+
+  <!-- ═══════════════════════════════════════════════ -->
+  <!-- VIEW: プレイヤー -->
+  <!-- ═══════════════════════════════════════════════ -->
+  <section id="view-player" class="view">
+    <!-- Book Header -->
+    <header class="text-center mb-6">
+      <h2 id="player-book-title" class="font-serif text-xl font-bold truncate"></h2>
+      <div class="flex items-center justify-center gap-3 mt-2">
+        <span id="player-round-badge"
+          class="bg-ctaDim text-cta text-xs font-medium px-3 py-1 rounded-full">第1周目</span>
+        <div class="flex items-center gap-1.5">
+          <svg class="ring-progress w-5 h-5" viewBox="0 0 20 20">
+            <circle cx="10" cy="10" r="8" fill="none" stroke="#262626" stroke-width="2"/>
+            <circle id="player-ring" cx="10" cy="10" r="8" fill="none" stroke="#D4AF37" stroke-width="2"
+              stroke-dasharray="50.27" stroke-dashoffset="50.27" stroke-linecap="round"/>
+          </svg>
+          <span id="player-progress-pct" class="text-xs text-textMuted">0%</span>
+        </div>
+      </div>
+    </header>
+
+    <!-- Chapter List -->
+    <div id="player-chapters" class="space-y-1 max-h-[55vh] overflow-y-auto pr-1 pb-4"></div>
+
+    <!-- Round Complete Button -->
+    <button id="btn-complete-round"
+      class="hidden w-full mt-4 border border-cta/40 text-cta font-medium py-3 rounded-xl
+             hover:bg-ctaDim transition-all btn-press text-sm">
+      この周を完了して次の周へ
+    </button>
+  </section>
+
+</div>
+
+<!-- ═══════════════════════════════════════════════ -->
+<!-- Player Controls (Fixed Bottom) -->
+<!-- ═══════════════════════════════════════════════ -->
+<div id="player-controls" class="hidden fixed bottom-16 left-0 right-0 z-40">
+  <div class="bg-surface/95 backdrop-blur-lg border-t border-border">
+    <div class="max-w-lg mx-auto px-4 py-3">
+      <!-- Chapter Title -->
+      <p id="ctrl-chapter-title" class="text-xs text-textSecondary text-center truncate mb-2.5"></p>
+
+      <!-- Seek Bar -->
+      <div class="flex items-center gap-2.5 text-[10px] text-textMuted font-mono">
+        <span id="ctrl-current-time" class="w-10 text-right tabular-nums">0:00</span>
+        <div class="seek-container flex-1 relative">
+          <div id="seek-fill" class="seek-fill" style="width:0%"></div>
+          <input type="range" id="ctrl-seek" min="0" max="1000" value="0" class="w-full relative z-10"
+            aria-label="シーク">
+        </div>
+        <span id="ctrl-duration" class="w-10 tabular-nums">0:00</span>
+      </div>
+
+      <!-- Controls -->
+      <div class="flex items-center justify-center gap-5 mt-2.5">
+        <button id="btn-prev" class="min-w-[44px] min-h-[44px] flex items-center justify-center text-textMuted hover:text-textPrimary transition-colors btn-press" aria-label="前の章">
+          <svg class="w-5 h-5" fill="currentColor" viewBox="0 0 24 24"><path d="M6 6h2v12H6zm3.5 6l8.5 6V6z"/></svg>
+        </button>
+        <button id="btn-skip-back" class="min-w-[44px] min-h-[44px] flex items-center justify-center text-textSecondary hover:text-textPrimary transition-colors btn-press" aria-label="15秒戻す">
+          <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M12.066 11.2a1 1 0 000 1.6l5.334 4A1 1 0 0019 16V8a1 1 0 00-1.6-.8l-5.333 4zM4.066 11.2a1 1 0 000 1.6l5.334 4A1 1 0 0011 16V8a1 1 0 00-1.6-.8l-5.334 4z"/>
+          </svg>
+          <span class="absolute text-[8px] font-bold text-textMuted mt-6">15</span>
+        </button>
+
+        <button id="btn-play"
+          class="w-14 h-14 bg-cta rounded-full flex items-center justify-center
+                 hover:bg-ctaHover transition-all btn-press shadow-lg shadow-cta/20"
+          aria-label="再生 / 一時停止">
+          <svg id="icon-play" class="w-6 h-6 text-bg ml-0.5" fill="currentColor" viewBox="0 0 24 24">
+            <path d="M8 5v14l11-7z"/>
+          </svg>
+          <svg id="icon-pause" class="w-6 h-6 text-bg hidden" fill="currentColor" viewBox="0 0 24 24">
+            <path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z"/>
+          </svg>
+        </button>
+
+        <button id="btn-skip-fwd" class="min-w-[44px] min-h-[44px] flex items-center justify-center text-textSecondary hover:text-textPrimary transition-colors btn-press relative" aria-label="30秒進む">
+          <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M11.933 12.8a1 1 0 000-1.6L6.6 7.2A1 1 0 005 8v8a1 1 0 001.6.8l5.333-4zM19.933 12.8a1 1 0 000-1.6l-5.333-4A1 1 0 0013 8v8a1 1 0 001.6.8l5.333-4z"/>
+          </svg>
+          <span class="absolute text-[8px] font-bold text-textMuted mt-6">30</span>
+        </button>
+        <button id="btn-next" class="min-w-[44px] min-h-[44px] flex items-center justify-center text-textMuted hover:text-textPrimary transition-colors btn-press" aria-label="次の章">
+          <svg class="w-5 h-5" fill="currentColor" viewBox="0 0 24 24"><path d="M6 18l8.5-6L6 6v12zM16 6v12h2V6h-2z"/></svg>
+        </button>
+      </div>
+
+      <!-- Speed -->
+      <div class="text-center mt-1.5">
+        <button id="btn-speed"
+          class="text-[11px] text-textMuted bg-bg/50 border border-border px-3 py-1 rounded-full
+                 hover:border-cta/30 hover:text-cta transition-colors btn-press min-h-[32px]"
+          aria-label="再生速度">
+          1.0x
+        </button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════════════ -->
+<!-- Bottom Navigation -->
+<!-- ═══════════════════════════════════════════════ -->
+<nav class="fixed bottom-0 left-0 right-0 z-50 bg-surface/95 backdrop-blur-lg border-t border-border safe-bottom"
+     role="navigation" aria-label="メインナビゲーション">
+  <div class="max-w-lg mx-auto flex">
+    <button data-view="library"
+      class="nav-tab flex-1 flex flex-col items-center py-2.5 min-h-[52px] text-textMuted transition-colors cursor-pointer"
+      aria-label="ライブラリ">
+      <svg class="w-5 h-5 mb-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5">
+        <path stroke-linecap="round" stroke-linejoin="round"
+          d="M12 6.042A8.967 8.967 0 006 3.75c-1.052 0-2.062.18-3 .512v14.25A8.987 8.987 0 016 18c2.305 0 4.408.867 6 2.292m0-14.25a8.966 8.966 0 016-2.292c1.052 0 2.062.18 3 .512v14.25A8.987 8.987 0 0018 18a8.967 8.967 0 00-6 2.292m0-14.25v14.25"/>
+      </svg>
+      <span class="text-[10px]">ライブラリ</span>
+    </button>
+    <button data-view="convert"
+      class="nav-tab flex-1 flex flex-col items-center py-2.5 min-h-[52px] text-textMuted transition-colors cursor-pointer"
+      aria-label="変換">
+      <svg class="w-5 h-5 mb-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5">
+        <path stroke-linecap="round" stroke-linejoin="round"
+          d="M12 4.5v15m7.5-7.5h-15"/>
+      </svg>
+      <span class="text-[10px]">変換</span>
+    </button>
+    <button data-view="player"
+      class="nav-tab flex-1 flex flex-col items-center py-2.5 min-h-[52px] text-textMuted transition-colors cursor-pointer"
+      aria-label="再生中" id="nav-player-tab">
+      <svg class="w-5 h-5 mb-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5">
+        <path stroke-linecap="round" stroke-linejoin="round"
+          d="M19.114 5.636a9 9 0 010 12.728M16.463 8.288a5.25 5.25 0 010 7.424M6.75 8.25l4.72-4.72a.75.75 0 011.28.53v15.88a.75.75 0 01-1.28.53l-4.72-4.72H4.51c-.88 0-1.704-.507-1.938-1.354A9.01 9.01 0 012.25 12c0-.83.112-1.633.322-2.396C2.806 8.756 3.63 8.25 4.51 8.25H6.75z"/>
+      </svg>
+      <span class="text-[10px]">再生中</span>
+    </button>
+  </div>
+</nav>
+
+<!-- Hidden Audio Element -->
+<audio id="audio-el" preload="metadata"></audio>
+
+<script>
+/* ═══════════════════════════════════════════════════
+   State
+   ═══════════════════════════════════════════════════ */
+const state = {
+  currentView: 'library',
+  currentBookId: null,
+  currentBook: null,
+  currentChapterIdx: 0,
+  isPlaying: false,
+  playbackRate: 1.0,
+  lastJobId: null,
+  saveTimer: null,
+  lastSavedTime: 0,
+};
+
+const SPEEDS = [0.75, 1.0, 1.25, 1.5, 2.0];
+
+/* ═══════════════════════════════════════════════════
+   DOM Helpers
+   ═══════════════════════════════════════════════════ */
+const $ = s => document.querySelector(s);
+const $$ = s => document.querySelectorAll(s);
+const audio = $('#audio-el');
+
+function formatTime(sec) {
+  if (!sec || isNaN(sec)) return '0:00';
+  const m = Math.floor(sec / 60);
+  const s = Math.floor(sec % 60);
+  return `${m}:${s.toString().padStart(2, '0')}`;
+}
+
+function formatDuration(sec) {
+  if (!sec) return '0:00';
+  const h = Math.floor(sec / 3600);
+  const m = Math.floor((sec % 3600) / 60);
+  if (h > 0) return `${h}:${m.toString().padStart(2, '0')}:00`;
+  return `${m}分`;
+}
+
+function showToast(msg) {
+  const t = $('#toast');
+  $('#toast-message').textContent = msg;
+  t.classList.add('show');
+  setTimeout(() => t.classList.remove('show'), 2500);
+}
+
+function showModal(title, bodyHTML, actions) {
+  $('#modal-title').textContent = title;
+  $('#modal-body').innerHTML = bodyHTML;
+  const actEl = $('#modal-actions');
+  actEl.innerHTML = '';
+  actions.forEach(a => {
+    const btn = document.createElement('button');
+    btn.textContent = a.label;
+    btn.className = a.primary
+      ? 'flex-1 bg-cta text-bg font-medium py-2.5 rounded-xl hover:bg-ctaHover transition-all btn-press text-sm'
+      : 'flex-1 bg-bg border border-border text-textSecondary font-medium py-2.5 rounded-xl hover:border-borderLight transition-all btn-press text-sm';
+    btn.onclick = () => { $('#modal').classList.remove('show'); a.action?.(); };
+    actEl.appendChild(btn);
+  });
+  $('#modal').classList.add('show');
+}
+
+/* ═══════════════════════════════════════════════════
+   Navigation
+   ═══════════════════════════════════════════════════ */
+function switchView(viewName) {
+  state.currentView = viewName;
+  $$('.view').forEach(v => v.classList.remove('active'));
+  const target = $(`#view-${viewName}`);
+  if (target) target.classList.add('active');
+
+  $$('.nav-tab').forEach(tab => {
+    const isActive = tab.dataset.view === viewName;
+    tab.classList.toggle('text-cta', isActive);
+    tab.classList.toggle('text-textMuted', !isActive);
+  });
+
+  // Show/hide player controls
+  const showPlayer = viewName === 'player' && state.currentBookId;
+  $('#player-controls').classList.toggle('hidden', !showPlayer);
+
+  if (viewName === 'library') loadLibrary();
+  if (viewName === 'player' && !state.currentBookId) {
+    switchView('library');
+    return;
+  }
+}
+
+$$('.nav-tab').forEach(tab => {
+  tab.addEventListener('click', () => switchView(tab.dataset.view));
+});
+
+/* ═══════════════════════════════════════════════════
+   Library View
+   ═══════════════════════════════════════════════════ */
+async function loadLibrary() {
+  try {
+    const res = await fetch('/api/books');
+    const books = await res.json();
+    const list = $('#book-list');
+    const empty = $('#library-empty');
+
+    if (!books.length) {
+      list.innerHTML = '';
+      empty.classList.remove('hidden');
+      return;
+    }
+
+    empty.classList.add('hidden');
+    list.innerHTML = books.map(b => {
+      const pct = 0; // Will be calculated when opening
+      return `
+        <div class="bg-surface border border-border rounded-xl p-4 cursor-pointer
+                    hover:border-cta/30 hover:bg-surfaceHover transition-all btn-press fade-in"
+             onclick="openBook('${b.id}')" role="button" tabindex="0"
+             onkeydown="if(event.key==='Enter')openBook('${b.id}')"
+             oncontextmenu="event.preventDefault();confirmDeleteBook('${b.id}','${b.title.replace(/'/g, "\\'")}')">
+          <div class="flex items-start justify-between gap-3">
+            <div class="min-w-0 flex-1">
+              <h3 class="font-medium text-sm truncate">${b.title}</h3>
+              <div class="flex items-center gap-3 text-[11px] text-textMuted mt-1">
+                <span>${b.chapter_count}章</span>
+                <span>${formatDuration(b.total_duration_sec)}</span>
+              </div>
+            </div>
+            <span class="bg-ctaDim text-cta text-[10px] font-medium px-2 py-0.5 rounded-full whitespace-nowrap">
+              第${b.current_round}周目
+            </span>
+          </div>
+          <div class="mt-3 flex items-center gap-2 text-[10px] text-textMuted">
+            <div class="flex-1 bg-bg rounded-full h-1 overflow-hidden">
+              <div class="bg-cta/60 h-full rounded-full" style="width:0%"></div>
+            </div>
+          </div>
+          ${b.last_listened ? `<p class="text-[10px] text-textMuted mt-1.5">最終: ${new Date(b.last_listened).toLocaleDateString('ja-JP')}</p>` : ''}
+        </div>`;
+    }).join('');
+  } catch (e) {
+    console.error('Library load error:', e);
+  }
+}
+
+function confirmDeleteBook(bookId, title) {
+  showModal('削除確認', `<p class="text-sm text-textSecondary">「${title}」を削除しますか？音声ファイルも完全に消去されます。</p>`, [
+    { label: 'キャンセル', primary: false },
+    { label: '削除', primary: true, action: () => deleteBook(bookId) },
+  ]);
+}
+
+async function deleteBook(bookId) {
+  await fetch(`/api/books/${bookId}`, { method: 'DELETE' });
+  if (state.currentBookId === bookId) {
+    state.currentBookId = null;
+    state.currentBook = null;
+    audio.pause();
+  }
+  showToast('削除しました');
+  loadLibrary();
+}
+
+/* ═══════════════════════════════════════════════════
+   Player View
+   ═══════════════════════════════════════════════════ */
+async function openBook(bookId) {
+  try {
+    const res = await fetch(`/api/books/${bookId}`);
+    const book = await res.json();
+    if (book.error) return;
+
+    state.currentBookId = bookId;
+    state.currentBook = book;
+
+    // Find current chapter index from progress
+    const prog = book.progress;
+    state.currentChapterIdx = 0;
+    if (prog.current_chapter_id) {
+      const idx = book.chapters.findIndex(ch => ch.id === prog.current_chapter_id);
+      if (idx >= 0) state.currentChapterIdx = idx;
+    }
+
+    renderPlayer();
+    switchView('player');
+
+    // Load audio and seek to saved position
+    loadChapter(state.currentChapterIdx, prog.position_sec || 0);
+  } catch (e) {
+    console.error('Open book error:', e);
+  }
+}
+
+function renderPlayer() {
+  const book = state.currentBook;
+  if (!book) return;
+
+  $('#player-book-title').textContent = book.title;
+  $('#player-round-badge').textContent = `第${book.progress.current_round}周目`;
+
+  updateProgressRing();
+  renderChapterList();
+}
+
+function renderChapterList() {
+  const book = state.currentBook;
+  const container = $('#player-chapters');
+  container.innerHTML = book.chapters.map((ch, i) => {
+    const isCurrent = i === state.currentChapterIdx;
+    const isPlayed = i < state.currentChapterIdx;
+    return `
+      <div class="flex items-center gap-3 px-3 py-2.5 rounded-lg cursor-pointer transition-all btn-press
+                  ${isCurrent ? 'bg-ctaDim border border-cta/20' : 'hover:bg-surfaceHover'}
+                  min-h-[44px]"
+           onclick="loadChapter(${i})" role="button" tabindex="0"
+           onkeydown="if(event.key==='Enter')loadChapter(${i})">
+        <div class="w-6 h-6 flex items-center justify-center shrink-0">
+          ${isPlayed
+            ? '<svg class="w-4 h-4 text-success" fill="currentColor" viewBox="0 0 24 24"><path d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z"/></svg>'
+            : isCurrent
+              ? `<div class="w-2.5 h-2.5 bg-cta rounded-full ${state.isPlaying ? 'pulse-glow' : ''}"></div>`
+              : `<span class="text-xs text-textMuted">${i + 1}</span>`
+          }
+        </div>
+        <div class="min-w-0 flex-1">
+          <p class="text-sm truncate ${isCurrent ? 'text-cta font-medium' : isPlayed ? 'text-textMuted' : 'text-textPrimary'}">${ch.title}</p>
+        </div>
+        <span class="text-[11px] text-textMuted tabular-nums shrink-0">${formatTime(ch.duration_sec)}</span>
+      </div>`;
+  }).join('');
+}
+
+function updateProgressRing() {
+  const book = state.currentBook;
+  if (!book || !book.chapters.length) return;
+
+  const totalChapters = book.chapters.length;
+  const completedChapters = state.currentChapterIdx;
+  const pct = Math.round((completedChapters / totalChapters) * 100);
+
+  const circumference = 2 * Math.PI * 8; // r=8
+  const offset = circumference - (pct / 100) * circumference;
+  $('#player-ring').setAttribute('stroke-dashoffset', offset);
+  $('#player-progress-pct').textContent = `${pct}%`;
+
+  // Show complete round button if all chapters played
+  const showComplete = state.currentChapterIdx >= totalChapters - 1;
+  $('#btn-complete-round').classList.toggle('hidden', !showComplete);
+}
+
+function loadChapter(idx, seekTo = 0) {
+  const book = state.currentBook;
+  if (!book || idx < 0 || idx >= book.chapters.length) return;
+
+  state.currentChapterIdx = idx;
+  const ch = book.chapters[idx];
+
+  audio.src = `/api/books/${state.currentBookId}/audio/${encodeURIComponent(ch.filename)}`;
+  audio.playbackRate = state.playbackRate;
+
+  $('#ctrl-chapter-title').textContent = ch.title;
+  $('#ctrl-seek').value = 0;
+  $('#seek-fill').style.width = '0%';
+  $('#ctrl-current-time').textContent = '0:00';
+  $('#ctrl-duration').textContent = formatTime(ch.duration_sec);
+
+  renderChapterList();
+  updateProgressRing();
+
+  if (seekTo > 0) {
+    audio.addEventListener('loadedmetadata', function onMeta() {
+      audio.currentTime = seekTo;
+      audio.removeEventListener('loadedmetadata', onMeta);
+    });
+  }
+
+  // Update Media Session
+  if ('mediaSession' in navigator) {
+    navigator.mediaSession.metadata = new MediaMetadata({
+      title: ch.title,
+      artist: book.title,
+      album: `第${book.progress.current_round}周目`,
+    });
+  }
+
+  // Auto play if was playing
+  if (state.isPlaying) {
+    audio.play().catch(() => {});
+  }
+}
+
+/* ═══════════════════════════════════════════════════
+   Audio Controls
+   ═══════════════════════════════════════════════════ */
+$('#btn-play').addEventListener('click', () => {
+  if (!audio.src) return;
+  if (state.isPlaying) {
+    audio.pause();
+  } else {
+    audio.play().catch(() => {});
+  }
+});
+
+audio.addEventListener('play', () => {
+  state.isPlaying = true;
+  $('#icon-play').classList.add('hidden');
+  $('#icon-pause').classList.remove('hidden');
+  renderChapterList();
+});
+
+audio.addEventListener('pause', () => {
+  state.isPlaying = false;
+  $('#icon-play').classList.remove('hidden');
+  $('#icon-pause').classList.add('hidden');
+  renderChapterList();
+  saveProgressNow();
+});
+
+audio.addEventListener('timeupdate', () => {
+  if (!audio.duration) return;
+  const pct = (audio.currentTime / audio.duration) * 100;
+  $('#ctrl-seek').value = Math.round(pct * 10);
+  $('#seek-fill').style.width = `${pct}%`;
+  $('#ctrl-current-time').textContent = formatTime(audio.currentTime);
+  $('#ctrl-duration').textContent = formatTime(audio.duration);
+
+  // Debounced save every 5 seconds
+  const now = Date.now();
+  if (now - state.lastSavedTime > 5000) {
+    state.lastSavedTime = now;
+    saveProgressNow();
+  }
+});
+
+audio.addEventListener('ended', () => {
+  const book = state.currentBook;
+  if (!book) return;
+
+  if (state.currentChapterIdx < book.chapters.length - 1) {
+    // Auto-advance to next chapter
+    loadChapter(state.currentChapterIdx + 1);
+    audio.play().catch(() => {});
+  } else {
+    // Last chapter finished
+    state.isPlaying = false;
+    $('#icon-play').classList.remove('hidden');
+    $('#icon-pause').classList.add('hidden');
+    updateProgressRing();
+    renderChapterList();
+
+    showModal('周回完了', `<p class="text-sm text-textSecondary">第${book.progress.current_round}周目を聞き終えました。次の周に進みますか？</p>`, [
+      { label: 'あとで', primary: false },
+      { label: '次の周へ', primary: true, action: completeRound },
+    ]);
+  }
+});
+
+// Seek bar
+$('#ctrl-seek').addEventListener('input', (e) => {
+  if (!audio.duration) return;
+  const pct = e.target.value / 1000;
+  audio.currentTime = pct * audio.duration;
+  $('#seek-fill').style.width = `${pct * 100}%`;
+});
+
+// Skip buttons
+$('#btn-skip-back').addEventListener('click', () => { audio.currentTime = Math.max(0, audio.currentTime - 15); });
+$('#btn-skip-fwd').addEventListener('click', () => { audio.currentTime = Math.min(audio.duration || 0, audio.currentTime + 30); });
+
+// Prev/Next chapter
+$('#btn-prev').addEventListener('click', () => {
+  if (state.currentChapterIdx > 0) {
+    loadChapter(state.currentChapterIdx - 1);
+    if (state.isPlaying) audio.play().catch(() => {});
+  }
+});
+
+$('#btn-next').addEventListener('click', () => {
+  const book = state.currentBook;
+  if (book && state.currentChapterIdx < book.chapters.length - 1) {
+    loadChapter(state.currentChapterIdx + 1);
+    if (state.isPlaying) audio.play().catch(() => {});
+  }
+});
+
+// Speed control
+$('#btn-speed').addEventListener('click', () => {
+  const currentIdx = SPEEDS.indexOf(state.playbackRate);
+  const nextIdx = (currentIdx + 1) % SPEEDS.length;
+  state.playbackRate = SPEEDS[nextIdx];
+  audio.playbackRate = state.playbackRate;
+  $('#btn-speed').textContent = `${state.playbackRate}x`;
+});
+
+// Complete round
+$('#btn-complete-round').addEventListener('click', () => {
+  const book = state.currentBook;
+  if (!book) return;
+  showModal('周回完了', `<p class="text-sm text-textSecondary">第${book.progress.current_round}周目を完了して次の周に進みますか？</p>`, [
+    { label: 'キャンセル', primary: false },
+    { label: '次の周へ', primary: true, action: completeRound },
+  ]);
+});
+
+async function completeRound() {
+  if (!state.currentBookId) return;
+  try {
+    const res = await fetch(`/api/books/${state.currentBookId}/complete-round`, { method: 'POST' });
+    const data = await res.json();
+    if (data.new_round) {
+      showToast(`第${data.new_round}周目を開始しました`);
+      await openBook(state.currentBookId);
+    }
+  } catch (e) {
+    console.error('Complete round error:', e);
+  }
+}
+
+/* ═══════════════════════════════════════════════════
+   Progress Save
+   ═══════════════════════════════════════════════════ */
+async function saveProgressNow() {
+  if (!state.currentBookId || !state.currentBook) return;
+  const ch = state.currentBook.chapters[state.currentChapterIdx];
+  if (!ch) return;
+
+  try {
+    await fetch(`/api/books/${state.currentBookId}/progress`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        chapter_id: ch.id,
+        position_sec: audio.currentTime || 0,
+      }),
+    });
+  } catch (e) {
+    // Silent fail — will retry on next interval
+  }
+}
+
+// Save on visibility change (tab switch / app switch)
+document.addEventListener('visibilitychange', () => {
+  if (document.hidden) saveProgressNow();
+});
+document.addEventListener('pagehide', saveProgressNow);
+
+/* ═══════════════════════════════════════════════════
+   Media Session API
+   ═══════════════════════════════════════════════════ */
+if ('mediaSession' in navigator) {
+  navigator.mediaSession.setActionHandler('play', () => audio.play());
+  navigator.mediaSession.setActionHandler('pause', () => audio.pause());
+  navigator.mediaSession.setActionHandler('previoustrack', () => {
+    if (state.currentChapterIdx > 0) { loadChapter(state.currentChapterIdx - 1); audio.play().catch(() => {}); }
+  });
+  navigator.mediaSession.setActionHandler('nexttrack', () => {
+    const book = state.currentBook;
+    if (book && state.currentChapterIdx < book.chapters.length - 1) { loadChapter(state.currentChapterIdx + 1); audio.play().catch(() => {}); }
+  });
+  navigator.mediaSession.setActionHandler('seekbackward', () => { audio.currentTime = Math.max(0, audio.currentTime - 15); });
+  navigator.mediaSession.setActionHandler('seekforward', () => { audio.currentTime = Math.min(audio.duration || 0, audio.currentTime + 30); });
+}
+
+/* ═══════════════════════════════════════════════════
+   Conversion (existing, adapted)
+   ═══════════════════════════════════════════════════ */
+const PHASES = [
+  { key: 'text_processing', label: 'テキスト整形・章分割' },
+  { key: 'tts',             label: '音声合成' },
+  { key: 'post_processing', label: '音声後処理' },
+];
+
+const textInput = $('#text-input');
+const fileInput = $('#file-input');
+const fileLabel = $('#file-label');
+const convertBtn = $('#convert-btn');
+const backendSelect = $('#opt-backend');
+const gapSlider = $('#opt-paragraph-gap');
+const gapValue = $('#gap-value');
+
+gapSlider.addEventListener('input', () => { gapValue.textContent = gapSlider.value; });
+
+textInput.addEventListener('input', () => { convertBtn.disabled = !textInput.value.trim(); });
+
+fileInput.addEventListener('change', () => {
+  const f = fileInput.files[0];
+  if (f) {
+    fileLabel.textContent = f.name;
+    fileLabel.classList.replace('text-textMuted', 'text-cta');
+    const reader = new FileReader();
+    reader.onload = (e) => { textInput.value = e.target.result; convertBtn.disabled = !textInput.value.trim(); };
+    reader.readAsText(f, 'UTF-8');
+  }
+});
+
+backendSelect.addEventListener('change', () => {
+  const isVoicevox = backendSelect.value === 'voicevox';
+  $('#edge-voice-section').classList.toggle('hidden', isVoicevox);
+  $('#voicevox-voice-section').classList.toggle('hidden', !isVoicevox);
+  if (isVoicevox) loadVoicevoxVoices();
+});
+
+async function loadVoicevoxVoices() {
+  const select = $('#opt-voicevox-voice');
+  const warning = $('#voicevox-warning');
+  try {
+    const res = await fetch('/api/voices?backend=voicevox');
+    const data = await res.json();
+    if (data.error) { warning.classList.remove('hidden'); select.innerHTML = '<option value="1">デフォルト</option>'; return; }
+    warning.classList.add('hidden');
+    select.innerHTML = '';
+    data.forEach(v => { const opt = document.createElement('option'); opt.value = v.id; opt.textContent = v.name; select.appendChild(opt); });
+  } catch { warning.classList.remove('hidden'); select.innerHTML = '<option value="1">デフォルト</option>'; }
+}
+
+convertBtn.addEventListener('click', async () => {
+  const text = textInput.value.trim();
+  if (!text) return;
+
+  convertBtn.disabled = true;
+  convertBtn.textContent = '変換中...';
+  $('#error-section').classList.add('hidden');
+  $('#download-section').classList.add('hidden');
+
+  const phasesEl = $('#phases');
+  phasesEl.innerHTML = '';
+  PHASES.forEach(p => {
+    phasesEl.innerHTML += `
+      <div id="phase-${p.key}" class="fade-in">
+        <div class="flex justify-between text-xs mb-1">
+          <span class="text-textSecondary">${p.label}</span>
+          <span id="status-${p.key}" class="text-textMuted">待機中</span>
+        </div>
+        <div class="w-full bg-bg rounded-full h-1.5 overflow-hidden">
+          <div id="bar-${p.key}" class="progress-bar h-full bg-cta rounded-full" style="width:0%"></div>
+        </div>
+      </div>`;
+  });
+  $('#progress-section').classList.remove('hidden');
+
+  const isVoicevox = backendSelect.value === 'voicevox';
+  const form = new FormData();
+  form.append('text', text);
+  form.append('backend', backendSelect.value);
+  form.append('rate', $('#opt-rate').value);
+  form.append('normalize', $('#opt-normalize').checked);
+  form.append('paragraph_gap', gapSlider.value);
+  if (isVoicevox) {
+    const sid = $('#opt-voicevox-voice').value;
+    form.append('voice', sid);
+    form.append('speaker_id', sid);
+  } else {
+    form.append('voice', $('#opt-voice').value);
+  }
+
+  try {
+    const res = await fetch('/api/convert', { method: 'POST', body: form });
+    const data = await res.json();
+    if (data.error) { showConvertError(data.error); return; }
+
+    state.lastJobId = data.job_id;
+    const es = new EventSource(`/api/progress/${data.job_id}`);
+    let activePhase = null;
+
+    es.onmessage = (evt) => {
+      const d = JSON.parse(evt.data);
+
+      if (d.phase === 'done') {
+        es.close();
+        PHASES.forEach(p => {
+          const b = $(`#bar-${p.key}`); b.classList.remove('bar-active'); b.style.width = '100%';
+          const st = $(`#status-${p.key}`); st.textContent = '完了';
+          st.classList.remove('text-cta', 'text-textMuted'); st.classList.add('text-success');
+        });
+        $('#progress-section').querySelector('h2').textContent = '変換完了';
+        convertBtn.textContent = '変換開始'; convertBtn.disabled = false;
+
+        if (d.files && d.files.length) {
+          const list = $('#file-list');
+          list.innerHTML = '';
+          d.files.forEach(f => {
+            list.innerHTML += `
+              <a href="/api/download/${data.job_id}/${encodeURIComponent(f)}"
+                 class="flex items-center gap-3 p-3 border border-border rounded-xl hover:border-cta/30
+                        hover:bg-surfaceHover transition-all text-sm cursor-pointer">
+                <svg class="w-5 h-5 text-cta shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v2a2 2 0 002 2h12a2 2 0 002-2v-2M7 10l5 5 5-5M12 15V3"/>
+                </svg>
+                <span class="truncate text-textSecondary">${f}</span>
+              </a>`;
+          });
+          $('#download-section').classList.remove('hidden');
+        }
+        return;
+      }
+
+      if (d.phase === 'error') { es.close(); showConvertError(d.message); return; }
+
+      if (activePhase !== d.phase) {
+        if (activePhase) {
+          const prevBar = $(`#bar-${activePhase}`); prevBar.classList.remove('bar-active'); prevBar.style.width = '100%';
+          const prev = $(`#status-${activePhase}`); prev.textContent = '完了';
+          prev.classList.remove('text-cta', 'text-textMuted'); prev.classList.add('text-success');
+        }
+        activePhase = d.phase;
+        const newBar = $(`#bar-${d.phase}`);
+        if (newBar) newBar.classList.add('bar-active');
+      }
+
+      const bar = $(`#bar-${d.phase}`);
+      const status = $(`#status-${d.phase}`);
+      if (bar && status) {
+        const pct = d.total > 0 ? Math.round((d.current / d.total) * 100) : 0;
+        if (d.current > 0) bar.classList.remove('bar-active');
+        bar.style.width = pct + '%';
+        status.textContent = d.message;
+        status.classList.remove('text-textMuted'); status.classList.add('text-cta');
+      }
+    };
+
+    es.onerror = () => {
+      es.close();
+      if ($('#download-section').classList.contains('hidden')) {
+        showConvertError('接続が切断されました');
+      }
+    };
+  } catch (e) { showConvertError(e.message); }
+});
+
+function showConvertError(msg) {
+  $('#error-message').textContent = msg;
+  $('#error-section').classList.remove('hidden');
+  convertBtn.textContent = '変換開始'; convertBtn.disabled = false;
+}
+
+// Save to Library
+$('#save-to-library-btn').addEventListener('click', () => {
+  if (!state.lastJobId) return;
+  const defaultTitle = fileInput.files[0]?.name?.replace(/\.txt$/i, '') || '無題';
+  showModal('ライブラリに保存',
+    `<input id="book-title-input" type="text" value="${defaultTitle}"
+       class="w-full bg-bg border border-border rounded-lg px-3 py-2.5 text-sm text-textPrimary
+              focus:outline-none focus:ring-2 focus:ring-cta/30 focus:border-cta/50"
+       placeholder="タイトルを入力">`,
+    [
+      { label: 'キャンセル', primary: false },
+      { label: '保存', primary: true, action: async () => {
+        const title = document.getElementById('book-title-input')?.value || defaultTitle;
+        try {
+          const res = await fetch(`/api/books/from-job/${state.lastJobId}`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ title }),
+          });
+          const data = await res.json();
+          if (data.error) { showToast('保存に失敗しました'); return; }
+          showToast('ライブラリに保存しました');
+          switchView('library');
+        } catch { showToast('保存に失敗しました'); }
+      }},
+    ]
+  );
+});
+
+/* ═══════════════════════════════════════════════════
+   Init
+   ═══════════════════════════════════════════════════ */
+(async function init() {
+  // Load library and determine initial view
+  try {
+    const res = await fetch('/api/books');
+    const books = await res.json();
+    switchView(books.length > 0 ? 'library' : 'convert');
+  } catch {
+    switchView('convert');
+  }
+})();
+</script>
+</body>
+</html>

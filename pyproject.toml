@@ -1,0 +1,38 @@
+[build-system]
+requires = ["setuptools>=68.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "book2audio"
+version = "0.3.0"
+description = "テキストをオーディオブックに変換するツール"
+readme = "README.md"
+requires-python = ">=3.11"
+license = {text = "MIT"}
+dependencies = [
+    "edge-tts>=6.1",
+    "pydub>=0.25",
+    "click>=8.1",
+    "tqdm>=4.65",
+    "mutagen>=1.47",
+    "fastapi>=0.104",
+    "uvicorn[standard]>=0.24",
+    "python-multipart>=0.0.6",
+    "httpx>=0.25",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0",
+    "pytest-asyncio>=0.21",
+]
+
+[project.scripts]
+book2audio = "book2audio.cli:main"
+book2audio-web = "book2audio.web.app:start"
+
+[tool.setuptools.packages.find]
+include = ["book2audio*"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"

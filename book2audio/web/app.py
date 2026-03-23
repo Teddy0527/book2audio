@@ -190,18 +190,27 @@ async def backends():
     ]
 
 
+# ── ユーザー API ──────────────────────────────────────
+
+@app.get("/api/users")
+async def list_users():
+    """ユーザー一覧。"""
+    return db.list_users()
+
+
 # ── ライブラリ API ────────────────────────────────────
 
 @app.get("/api/books")
-async def list_books():
-    """全書籍一覧（進捗サマリー付き）。"""
-    return db.list_books()
+async def list_books(user_id: str = "koh"):
+    """全書籍一覧（ユーザー別進捗サマリー付き）。"""
+    return db.list_books(user_id)
 
 
 @app.get("/api/books/{book_id}")
-async def get_book(book_id: str):
-    """書籍詳細 + 章一覧 + 進捗。"""
-    book = db.get_book(book_id)
+async def get_book(book_id: str, user_id: str = "koh"):
+    """書籍詳細 + 章一覧 + ユーザー別進捗。"""
+    db.ensure_progress(user_id, book_id)
+    book = db.get_book(book_id, user_id)
     if book is None:
         return Response(
             content=json.dumps({"error": "Book not found"}),
@@ -297,9 +306,9 @@ async def serve_audio(book_id: str, filename: str):
 # ── 進捗 API ─────────────────────────────────────────
 
 @app.get("/api/books/{book_id}/progress")
-async def get_progress(book_id: str):
+async def get_progress(book_id: str, user_id: str = "koh"):
     """現在の再生位置・周目を取得。"""
-    prog = db.get_progress(book_id)
+    prog = db.get_progress(user_id, book_id)
     if prog is None:
         return Response(
             content=json.dumps({"error": "Book not found"}),
@@ -321,9 +330,9 @@ class SaveProgressRequest(BaseModel):
 
 
 @app.put("/api/books/{book_id}/progress")
-async def save_progress(book_id: str, req: SaveProgressRequest):
+async def save_progress(book_id: str, req: SaveProgressRequest, user_id: str = "koh"):
     """再生位置を保存。"""
-    saved = db.save_progress(book_id, req.chapter_id, req.position_sec)
+    saved = db.save_progress(user_id, book_id, req.chapter_id, req.position_sec)
     if not saved:
         return Response(
             content=json.dumps({"error": "Book not found"}),
@@ -334,9 +343,9 @@ async def save_progress(book_id: str, req: SaveProgressRequest):
 
 
 @app.post("/api/books/{book_id}/complete-round")
-async def complete_round(book_id: str):
+async def complete_round(book_id: str, user_id: str = "koh"):
     """現在の周目を完了し、次の周目を開始。"""
-    new_round = db.advance_round(book_id)
+    new_round = db.advance_round(user_id, book_id)
     if new_round is None:
         return Response(
             content=json.dumps({"error": "Book not found"}),
@@ -347,9 +356,9 @@ async def complete_round(book_id: str):
 
 
 @app.get("/api/books/{book_id}/history")
-async def get_history(book_id: str):
+async def get_history(book_id: str, user_id: str = "koh"):
     """リスニング履歴（全周目）。"""
-    rows = db.get_history(book_id)
+    rows = db.get_history(user_id, book_id)
     return [
         {
             "round_number": r.round_number,

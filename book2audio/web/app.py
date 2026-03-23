@@ -13,6 +13,7 @@ from fastapi import FastAPI, Form, UploadFile
 from fastapi.responses import (
     FileResponse, HTMLResponse, RedirectResponse, Response, StreamingResponse,
 )
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from book2audio.web.database import Database
@@ -43,6 +44,9 @@ app = FastAPI(title="book2audio", lifespan=lifespan)
 
 STATIC_DIR = Path(__file__).parent / "static"
 
+# Static files mount (icons, manifest, etc.)
+app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
+
 
 # ── 既存エンドポイント ────────────────────────────────
 
@@ -51,9 +55,22 @@ async def index():
     return (STATIC_DIR / "index.html").read_text(encoding="utf-8")
 
 
+@app.get("/sw.js")
+async def service_worker():
+    """Service Worker はルート直下で配信（スコープの都合）。"""
+    return FileResponse(
+        path=str(STATIC_DIR / "sw.js"),
+        media_type="application/javascript",
+        headers={"Cache-Control": "no-cache"},
+    )
+
+
 @app.get("/favicon.ico")
 async def favicon():
-    return Response(status_code=204)
+    return FileResponse(
+        path=str(STATIC_DIR / "icons" / "icon-192x192.png"),
+        media_type="image/png",
+    )
 
 
 @app.post("/api/convert")

@@ -369,6 +369,64 @@ async def get_history(book_id: str, user_id: str = "koh"):
     ]
 
 
+# ── クイズ API ────────────────────────────────────────
+
+@app.get("/api/books/{book_id}/chapters/{chapter_id}/quiz")
+async def get_quiz(book_id: str, chapter_id: int):
+    """章のクイズ問題を取得。"""
+    questions = db.get_quiz_questions(chapter_id)
+    return questions
+
+
+class QuizAttemptRequest(BaseModel):
+    question_id: int
+    is_correct: bool
+
+
+@app.post("/api/books/{book_id}/chapters/{chapter_id}/quiz/attempt")
+async def submit_quiz_attempt(
+    book_id: str, chapter_id: int, req: QuizAttemptRequest, user_id: str = "koh"
+):
+    """クイズ回答を記録。"""
+    db.save_quiz_attempt(user_id, req.question_id, req.is_correct)
+    return {"ok": True}
+
+
+class QuizBatchRequest(BaseModel):
+    results: list[QuizAttemptRequest]
+
+
+@app.post("/api/books/{book_id}/chapters/{chapter_id}/quiz/batch")
+async def submit_quiz_batch(
+    book_id: str, chapter_id: int, req: QuizBatchRequest, user_id: str = "koh"
+):
+    """クイズ結果を一括記録 + 復習スケジュール更新。"""
+    correct = 0
+    for r in req.results:
+        db.save_quiz_attempt(user_id, r.question_id, r.is_correct)
+        if r.is_correct:
+            correct += 1
+
+    total = len(req.results)
+    pct = round(correct / total * 100) if total else 0
+
+    db.update_review_schedule(user_id, chapter_id, pct)
+
+    return {"correct": correct, "total": total, "pct": pct}
+
+
+@app.get("/api/books/{book_id}/quiz-stats")
+async def get_quiz_stats(book_id: str, user_id: str = "koh"):
+    """全章のクイズ正答率サマリー。"""
+    return db.get_quiz_stats(user_id, book_id)
+
+
+@app.get("/api/books/{book_id}/reviews")
+async def get_reviews(book_id: str, user_id: str = "koh"):
+    """今日復習すべき章のリスト。"""
+    return db.get_due_reviews(user_id, book_id)
+
+
 # ── サーバー起動 ──────────────────────────────────────
 
 def start():

@@ -95,8 +95,33 @@ _SCHEMA_STATEMENTS = [
         started_at   TEXT NOT NULL,
         completed_at TEXT
     )""",
+    """CREATE TABLE IF NOT EXISTS quiz_questions (
+        id          INTEGER PRIMARY KEY AUTOINCREMENT,
+        book_id     TEXT NOT NULL REFERENCES books(id) ON DELETE CASCADE,
+        chapter_id  INTEGER NOT NULL REFERENCES chapters(id) ON DELETE CASCADE,
+        question    TEXT NOT NULL,
+        answer      TEXT NOT NULL,
+        difficulty  INTEGER NOT NULL DEFAULT 1
+    )""",
+    """CREATE TABLE IF NOT EXISTS quiz_attempts (
+        id           INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id      TEXT NOT NULL REFERENCES users(id),
+        question_id  INTEGER NOT NULL REFERENCES quiz_questions(id) ON DELETE CASCADE,
+        is_correct   INTEGER NOT NULL DEFAULT 0,
+        attempted_at TEXT NOT NULL
+    )""",
+    """CREATE TABLE IF NOT EXISTS review_schedule (
+        user_id       TEXT NOT NULL REFERENCES users(id),
+        chapter_id    INTEGER NOT NULL REFERENCES chapters(id) ON DELETE CASCADE,
+        next_review   TEXT NOT NULL,
+        interval_days INTEGER NOT NULL DEFAULT 1,
+        ease_factor   REAL NOT NULL DEFAULT 2.5,
+        PRIMARY KEY (user_id, chapter_id)
+    )""",
     "CREATE INDEX IF NOT EXISTS idx_chapters_book ON chapters(book_id, track_order)",
     "CREATE INDEX IF NOT EXISTS idx_history_user_book ON listening_history(user_id, book_id, round_number)",
+    "CREATE INDEX IF NOT EXISTS idx_quiz_chapter ON quiz_questions(book_id, chapter_id)",
+    "CREATE INDEX IF NOT EXISTS idx_attempts_user ON quiz_attempts(user_id, question_id)",
 ]
 
 
@@ -398,3 +423,130 @@ class Database:
             )
             for r in rows
         ]
+
+    # ── Quiz ──────────────────────────────────────────
+
+    def add_quiz_question(
+        self, book_id: str, chapter_id: int, question: str, answer: str, difficulty: int = 1
+    ) -> int:
+        cur = self._conn.execute(
+            "INSERT INTO quiz_questions (book_id, chapter_id, question, answer, difficulty) "
+            "VALUES (?, ?, ?, ?, ?)",
+            (book_id, chapter_id, question, answer, difficulty),
+        )
+        self._conn.commit()
+        return cur.lastrowid
+
+    def get_quiz_questions(self, chapter_id: int) -> list[dict]:
+        return self._fetchall(
+            "SELECT * FROM quiz_questions WHERE chapter_id = ? ORDER BY difficulty, id",
+            (chapter_id,),
+        )
+
+    def save_quiz_attempt(
+        self, user_id: str, question_id: int, is_correct: bool
+    ) -> None:
+        now = _now_iso()
+        self._conn.execute(
+            "INSERT INTO quiz_attempts (user_id, question_id, is_correct, attempted_at) "
+            "VALUES (?, ?, ?, ?)",
+            (user_id, question_id, 1 if is_correct else 0, now),
+        )
+        self._conn.commit()
+
+    def get_quiz_stats(self, user_id: str, book_id: str) -> list[dict]:
+        """章ごとのクイズ正答率サマリー。"""
+        return self._fetchall(
+            "SELECT c.id AS chapter_id, c.title, c.track_order, "
+            "  COUNT(DISTINCT qq.id) AS total_questions, "
+            "  COUNT(qa.id) AS total_attempts, "
+            "  SUM(CASE WHEN qa.is_correct = 1 THEN 1 ELSE 0 END) AS correct_count "
+            "FROM chapters c "
+            "LEFT JOIN quiz_questions qq ON qq.chapter_id = c.id "
+            "LEFT JOIN quiz_attempts qa ON qa.question_id = qq.id AND qa.user_id = ? "
+            "WHERE c.book_id = ? "
+            "GROUP BY c.id ORDER BY c.track_order",
+            (user_id, book_id),
+        )
+
+    def get_chapter_last_score(self, user_id: str, chapter_id: int) -> dict | None:
+        """直近のクイズ結果（最新のattempt_atグループ）。"""
+        rows = self._fetchall(
+            "SELECT qq.id, qa.is_correct "
+            "FROM quiz_questions qq "
+            "LEFT JOIN quiz_attempts qa ON qa.question_id = qq.id AND qa.user_id = ? "
+            "WHERE qq.chapter_id = ? "
+            "ORDER BY qa.attempted_at DESC",
+            (user_id, chapter_id),
+        )
+        if not rows:
+            return None
+        total = len(rows)
+        correct = sum(1 for r in rows if r.get("is_correct") == 1)
+        return {"total": total, "correct": correct, "pct": round(correct / total * 100) if total else 0}
+
+    # ── Review Schedule (SM-2) ────────────────────────
+
+    def get_due_reviews(self, user_id: str, book_id: str) -> list[dict]:
+        """今日復習すべき章のリスト。"""
+        now = _now_iso()[:10]  # YYYY-MM-DD
+        return self._fetchall(
+            "SELECT rs.*, c.title, c.track_order "
+            "FROM review_schedule rs "
+            "JOIN chapters c ON c.id = rs.chapter_id "
+            "WHERE rs.user_id = ? AND c.book_id = ? AND rs.next_review <= ? "
+            "ORDER BY c.track_order",
+            (user_id, book_id, now),
+        )
+
+    def update_review_schedule(
+        self, user_id: str, chapter_id: int, correct_pct: float
+    ) -> None:
+        """SM-2アルゴリズムで次回復習日を計算・更新。"""
+        from datetime import timedelta
+
+        now = _now_iso()
+        today = now[:10]
+
+        existing = self._fetchone(
+            "SELECT * FROM review_schedule WHERE user_id = ? AND chapter_id = ?",
+            (user_id, chapter_id),
+        )
+
+        if existing:
+            interval = existing["interval_days"]
+            ef = existing["ease_factor"]
+        else:
+            interval = 1
+            ef = 2.5
+
+        # SM-2: quality 0-5 (map correct_pct to 0-5)
+        q = min(5, max(0, round(correct_pct / 100 * 5)))
+
+        if q >= 3:
+            if interval == 1:
+                interval = 1
+            elif interval <= 3:
+                interval = 6
+            else:
+                interval = round(interval * ef)
+        else:
+            interval = 1
+
+        ef = max(1.3, ef + (0.1 - (5 - q) * (0.08 + (5 - q) * 0.02)))
+
+        next_date = (datetime.now(timezone.utc) + timedelta(days=interval)).strftime("%Y-%m-%d")
+
+        if existing:
+            self._conn.execute(
+                "UPDATE review_schedule SET next_review = ?, interval_days = ?, ease_factor = ? "
+                "WHERE user_id = ? AND chapter_id = ?",
+                (next_date, interval, ef, user_id, chapter_id),
+            )
+        else:
+            self._conn.execute(
+                "INSERT INTO review_schedule (user_id, chapter_id, next_review, interval_days, ease_factor) "
+                "VALUES (?, ?, ?, ?, ?)",
+                (user_id, chapter_id, next_date, interval, ef),
+            )
+        self._conn.commit()

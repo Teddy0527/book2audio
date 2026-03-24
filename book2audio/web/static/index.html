@@ -119,6 +119,28 @@ tailwind.config = {
   /* Safe area padding */
   .safe-bottom { padding-bottom: max(env(safe-area-inset-bottom), 0px); }
 
+  /* Quiz animations */
+  @keyframes slideUp { from { transform: translateY(100%); opacity: 0; } to { transform: translateY(0); opacity: 1; } }
+  @keyframes slideLeft { from { transform: translateX(0); opacity: 1; } to { transform: translateX(-100%); opacity: 0; } }
+  @keyframes slideFromRight { from { transform: translateX(50%); opacity: 0; } to { transform: translateX(0); opacity: 1; } }
+  @keyframes dotBounce { 0% { transform: scale(1); } 50% { transform: scale(1.4); } 100% { transform: scale(1); } }
+  @keyframes shake { 0%, 100% { transform: translateX(0); } 20%, 60% { transform: translateX(-6px); } 40%, 80% { transform: translateX(6px); } }
+  @keyframes ringFill { from { stroke-dashoffset: var(--ring-circumference); } }
+  @keyframes staggerIn { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
+
+  .slide-up { animation: slideUp 0.35s cubic-bezier(0.16, 1, 0.3, 1); }
+  .slide-left { animation: slideLeft 0.25s ease-in forwards; }
+  .slide-from-right { animation: slideFromRight 0.3s ease-out; }
+  .dot-bounce { animation: dotBounce 0.3s ease; }
+  .shake { animation: shake 0.4s ease; }
+  .stagger-in { animation: staggerIn 0.3s ease-out both; }
+
+  .quiz-overlay {
+    position: fixed; inset: 0; z-index: 80; background: #0A0A0A;
+    display: none; flex-direction: column;
+  }
+  .quiz-overlay.show { display: flex; }
+
   @media (prefers-reduced-motion: reduce) {
     *, *::before, *::after { animation-duration: 0.01ms !important; transition-duration: 0.01ms !important; }
   }
@@ -130,6 +152,88 @@ tailwind.config = {
 <div id="toast" class="toast">
   <div class="bg-surface border border-cta/30 rounded-xl px-4 py-2.5 text-sm text-cta shadow-lg shadow-cta/10">
     <span id="toast-message"></span>
+  </div>
+</div>
+
+<!-- Quiz Overlay (fullscreen) -->
+<div id="quiz-overlay" class="quiz-overlay">
+  <!-- Quiz: Question State -->
+  <div id="quiz-question-state" class="flex-1 flex flex-col max-w-lg mx-auto w-full px-4 pt-8 pb-6">
+    <!-- Header -->
+    <div class="flex items-center justify-between mb-8">
+      <button id="quiz-close" class="min-w-[44px] min-h-[44px] flex items-center justify-center text-textMuted hover:text-textPrimary transition-colors cursor-pointer btn-press" aria-label="閉じる">
+        <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12"/></svg>
+      </button>
+      <div id="quiz-progress-dots" class="flex items-center gap-2"></div>
+      <span id="quiz-difficulty" class="text-xs text-textMuted"></span>
+    </div>
+
+    <!-- Question Card -->
+    <div id="quiz-card" class="flex-1 flex flex-col">
+      <div id="quiz-question-area" class="flex-1 flex flex-col justify-center">
+        <p id="quiz-question-text" class="text-lg font-medium leading-relaxed text-center px-2"></p>
+      </div>
+
+      <!-- Reveal Button (shown before answer) -->
+      <div id="quiz-reveal-area" class="mt-auto">
+        <p class="text-xs text-textMuted text-center mb-3">まず頭の中で答えを考えてから...</p>
+        <button id="quiz-reveal-btn"
+          class="w-full bg-cta text-bg font-medium py-4 rounded-xl hover:bg-ctaHover transition-all btn-press text-sm
+                 shadow-lg shadow-cta/20 pulse-glow cursor-pointer min-h-[52px]">
+          答えを表示
+        </button>
+      </div>
+
+      <!-- Answer + Grading (hidden until reveal) -->
+      <div id="quiz-answer-area" class="hidden mt-auto">
+        <p id="quiz-question-small" class="text-xs text-textMuted mb-3 text-center line-clamp-2"></p>
+        <div class="bg-ctaDim border border-cta/20 rounded-xl p-4 mb-5">
+          <p id="quiz-answer-text" class="text-sm text-cta leading-relaxed whitespace-pre-line"></p>
+        </div>
+        <div class="flex gap-3">
+          <button id="quiz-wrong-btn"
+            class="flex-1 bg-bg border border-border text-textSecondary font-medium py-3.5 rounded-xl
+                   hover:border-error/40 hover:text-error transition-all btn-press text-sm cursor-pointer min-h-[52px]">
+            もう一度
+          </button>
+          <button id="quiz-correct-btn"
+            class="flex-1 bg-cta text-bg font-medium py-3.5 rounded-xl
+                   hover:bg-ctaHover transition-all btn-press text-sm shadow-lg shadow-cta/20 cursor-pointer min-h-[52px]">
+            わかった
+          </button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Quiz: Result State -->
+  <div id="quiz-result-state" class="hidden flex-1 flex flex-col items-center max-w-lg mx-auto w-full px-4 pt-8 pb-6">
+    <div class="flex-1 flex flex-col items-center justify-center w-full">
+      <!-- Ring Chart -->
+      <svg class="w-32 h-32 mb-4" viewBox="0 0 120 120">
+        <circle cx="60" cy="60" r="50" fill="none" stroke="#262626" stroke-width="8"/>
+        <circle id="result-ring" class="ring-progress" cx="60" cy="60" r="50" fill="none" stroke="#D4AF37" stroke-width="8"
+          stroke-dasharray="314.16" stroke-dashoffset="314.16" stroke-linecap="round"
+          style="transition: stroke-dashoffset 1.2s ease-out"/>
+      </svg>
+      <p id="result-pct" class="text-3xl font-bold text-cta mb-1">0%</p>
+      <p id="result-chapter-title" class="text-sm text-textMuted mb-6"></p>
+
+      <!-- Result List -->
+      <div id="result-list" class="w-full space-y-2 mb-6"></div>
+
+      <!-- Next Review -->
+      <div id="result-next-review" class="w-full bg-surface border border-border rounded-xl p-3 text-center mb-6">
+        <p class="text-xs text-textMuted">次の復習</p>
+        <p id="result-review-date" class="text-sm text-textPrimary font-medium mt-0.5"></p>
+      </div>
+    </div>
+
+    <button id="result-close-btn"
+      class="w-full bg-surface border border-border text-textSecondary font-medium py-3.5 rounded-xl
+             hover:border-cta/30 hover:text-cta transition-all btn-press text-sm cursor-pointer min-h-[52px]">
+      閉じる
+    </button>
   </div>
 </div>
 
@@ -164,6 +268,22 @@ tailwind.config = {
       </div>
       <p id="user-name-display" class="text-xs text-textMuted mt-1 cursor-pointer hover:text-cta transition-colors" onclick="showUserSelect()"></p>
     </header>
+
+    <!-- Today's Review Card -->
+    <div id="review-card" class="hidden mb-5 bg-gradient-to-b from-ctaDim/50 to-transparent border border-cta/10 rounded-2xl p-4 fade-in">
+      <div class="flex items-center gap-2 mb-3">
+        <svg class="w-5 h-5 text-cta" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5">
+          <path stroke-linecap="round" stroke-linejoin="round" d="M12 6.042A8.967 8.967 0 006 3.75c-1.052 0-2.062.18-3 .512v14.25A8.987 8.987 0 016 18c2.305 0 4.408.867 6 2.292m0-14.25a8.966 8.966 0 016-2.292c1.052 0 2.062.18 3 .512v14.25A8.987 8.987 0 0018 18a8.967 8.967 0 00-6 2.292m0-14.25v14.25"/>
+        </svg>
+        <span class="text-sm font-medium text-cta">今日の復習</span>
+        <span id="review-count" class="text-xs text-textMuted"></span>
+      </div>
+      <div id="review-chapters" class="flex gap-2 overflow-x-auto pb-2 snap-x snap-mandatory -mx-1 px-1"></div>
+      <button id="start-review-btn"
+        class="w-full mt-3 bg-cta text-bg font-medium py-3 rounded-xl hover:bg-ctaHover transition-all btn-press text-sm cursor-pointer min-h-[44px]">
+        復習を始める
+      </button>
+    </div>
 
     <div id="book-list" class="space-y-3"></div>
 
@@ -776,10 +896,12 @@ audio.addEventListener('ended', () => {
   const book = state.currentBook;
   if (!book) return;
 
+  // Offer quiz for the chapter that just finished
+  const finishedChapter = book.chapters[state.currentChapterIdx];
+  offerQuiz(finishedChapter, state.currentChapterIdx < book.chapters.length - 1);
+
   if (state.currentChapterIdx < book.chapters.length - 1) {
-    // Auto-advance to next chapter
-    loadChapter(state.currentChapterIdx + 1);
-    audio.play().catch(() => {});
+    // Will auto-advance after quiz or skip
   } else {
     // Last chapter finished
     state.isPlaying = false;
@@ -883,6 +1005,227 @@ document.addEventListener('visibilitychange', () => {
   if (document.hidden) saveProgressNow();
 });
 document.addEventListener('pagehide', saveProgressNow);
+
+/* ═══════════════════════════════════════════════════
+   Quiz System
+   ═══════════════════════════════════════════════════ */
+const quizState = {
+  questions: [],
+  currentIdx: 0,
+  results: [],
+  chapterId: null,
+  chapterTitle: '',
+  hasNextChapter: false,
+};
+
+async function offerQuiz(chapter, hasNext) {
+  if (!chapter || !state.currentBookId) return;
+
+  try {
+    const res = await fetch(`/api/books/${state.currentBookId}/chapters/${chapter.id}/quiz`);
+    const questions = await res.json();
+    if (!questions.length) {
+      // No quiz available, auto-advance
+      if (hasNext) { loadChapter(state.currentChapterIdx + 1); audio.play().catch(() => {}); }
+      return;
+    }
+
+    quizState.questions = questions;
+    quizState.currentIdx = 0;
+    quizState.results = [];
+    quizState.chapterId = chapter.id;
+    quizState.chapterTitle = chapter.title;
+    quizState.hasNextChapter = hasNext;
+
+    showModal('クイズに挑戦',
+      `<p class="text-sm text-textSecondary">${chapter.title} — ${questions.length}問</p>`,
+      [
+        { label: 'スキップ', primary: false, action: () => {
+          if (hasNext) { loadChapter(state.currentChapterIdx + 1); audio.play().catch(() => {}); }
+        }},
+        { label: 'はじめる', primary: true, action: startQuiz },
+      ]
+    );
+  } catch {
+    if (hasNext) { loadChapter(state.currentChapterIdx + 1); audio.play().catch(() => {}); }
+  }
+}
+
+function startQuiz() {
+  const overlay = $('#quiz-overlay');
+  overlay.classList.add('show');
+  $('#quiz-question-state').classList.remove('hidden');
+  $('#quiz-result-state').classList.add('hidden');
+  renderQuizCard();
+}
+
+function renderQuizCard() {
+  const q = quizState.questions[quizState.currentIdx];
+  const total = quizState.questions.length;
+  const idx = quizState.currentIdx;
+
+  // Progress dots
+  const dotsEl = $('#quiz-progress-dots');
+  dotsEl.innerHTML = Array.from({length: total}, (_, i) => {
+    const done = i < idx;
+    const current = i === idx;
+    return `<div class="w-2.5 h-2.5 rounded-full transition-all duration-300 ${
+      done ? 'bg-cta' : current ? 'bg-cta/60 scale-110' : 'bg-border'
+    } ${done && i === idx - 1 ? 'dot-bounce' : ''}"></div>`;
+  }).join('');
+
+  // Difficulty stars
+  const stars = '★'.repeat(q.difficulty) + '☆'.repeat(3 - q.difficulty);
+  $('#quiz-difficulty').textContent = stars;
+
+  // Question
+  $('#quiz-question-text').textContent = q.question;
+  $('#quiz-question-small').textContent = q.question;
+  $('#quiz-answer-text').textContent = q.answer;
+
+  // Show question state, hide answer
+  $('#quiz-reveal-area').classList.remove('hidden');
+  $('#quiz-answer-area').classList.add('hidden');
+
+  // Animate card in
+  const card = $('#quiz-card');
+  card.classList.remove('slide-from-right');
+  void card.offsetWidth; // force reflow
+  card.classList.add('slide-from-right');
+}
+
+// Reveal answer
+$('#quiz-reveal-btn').addEventListener('click', () => {
+  $('#quiz-reveal-area').classList.add('hidden');
+  $('#quiz-answer-area').classList.remove('hidden');
+  $('#quiz-answer-area').classList.add('fade-in');
+});
+
+function gradeAndNext(isCorrect) {
+  const q = quizState.questions[quizState.currentIdx];
+  quizState.results.push({ question_id: q.id, is_correct: isCorrect, question: q.question });
+
+  if (quizState.currentIdx < quizState.questions.length - 1) {
+    quizState.currentIdx++;
+    renderQuizCard();
+  } else {
+    showQuizResult();
+  }
+}
+
+$('#quiz-correct-btn').addEventListener('click', () => gradeAndNext(true));
+$('#quiz-wrong-btn').addEventListener('click', () => {
+  const btn = $('#quiz-wrong-btn');
+  btn.classList.add('shake');
+  setTimeout(() => btn.classList.remove('shake'), 400);
+  gradeAndNext(false);
+});
+
+async function showQuizResult() {
+  $('#quiz-question-state').classList.add('hidden');
+  $('#quiz-result-state').classList.remove('hidden');
+
+  const correct = quizState.results.filter(r => r.is_correct).length;
+  const total = quizState.results.length;
+  const pct = Math.round(correct / total * 100);
+
+  // Submit batch results
+  try {
+    await fetch(`/api/books/${state.currentBookId}/chapters/${quizState.chapterId}/quiz/batch?${userParam()}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ results: quizState.results.map(r => ({ question_id: r.question_id, is_correct: r.is_correct })) }),
+    });
+  } catch {}
+
+  // Animate ring
+  const circumference = 2 * Math.PI * 50;
+  const offset = circumference - (pct / 100) * circumference;
+  const ring = $('#result-ring');
+  ring.style.strokeDashoffset = circumference; // reset
+  setTimeout(() => { ring.style.strokeDashoffset = offset; }, 50);
+
+  // Animate percentage counter
+  let currentPct = 0;
+  const pctEl = $('#result-pct');
+  const interval = setInterval(() => {
+    currentPct += 2;
+    if (currentPct >= pct) { currentPct = pct; clearInterval(interval); }
+    pctEl.textContent = `${currentPct}%`;
+  }, 20);
+
+  $('#result-chapter-title').textContent = quizState.chapterTitle;
+
+  // Result list with stagger animation
+  const listEl = $('#result-list');
+  listEl.innerHTML = quizState.results.map((r, i) => `
+    <div class="flex items-center gap-3 px-3 py-2 rounded-lg stagger-in
+                ${r.is_correct ? 'bg-success/5' : 'bg-error/5'}"
+         style="animation-delay: ${0.3 + i * 0.1}s">
+      <span class="text-sm ${r.is_correct ? 'text-success' : 'text-error'}">
+        ${r.is_correct ? '✓' : '✗'}
+      </span>
+      <span class="text-sm text-textSecondary truncate">Q${i+1}  ${r.question.substring(0, 30)}...</span>
+      <span class="text-xs ml-auto ${r.is_correct ? 'text-success' : 'text-error'}">
+        ${r.is_correct ? '正解' : '不正解'}
+      </span>
+    </div>
+  `).join('');
+
+  // Next review date (estimated from SM-2)
+  const days = pct >= 80 ? 6 : pct >= 60 ? 3 : 1;
+  const nextDate = new Date(Date.now() + days * 86400000);
+  $('#result-review-date').textContent = `${nextDate.getMonth()+1}月${nextDate.getDate()}日`;
+}
+
+$('#result-close-btn').addEventListener('click', () => {
+  $('#quiz-overlay').classList.remove('show');
+  if (quizState.hasNextChapter) {
+    loadChapter(state.currentChapterIdx + 1);
+    audio.play().catch(() => {});
+  }
+});
+
+$('#quiz-close').addEventListener('click', () => {
+  $('#quiz-overlay').classList.remove('show');
+  if (quizState.hasNextChapter && quizState.currentIdx === 0) {
+    loadChapter(state.currentChapterIdx + 1);
+    audio.play().catch(() => {});
+  }
+});
+
+// Review card in library
+async function loadReviews() {
+  if (!state.currentBookId && !state.userId) return;
+  try {
+    // Get first book's reviews
+    const booksRes = await fetch(`/api/books?${userParam()}`);
+    const books = await booksRes.json();
+    if (!books.length) return;
+
+    const bookId = books[0].id;
+    const res = await fetch(`/api/books/${bookId}/reviews?${userParam()}`);
+    const reviews = await res.json();
+
+    const card = $('#review-card');
+    if (!reviews.length) { card.classList.add('hidden'); return; }
+
+    card.classList.remove('hidden');
+    $('#review-count').textContent = `${reviews.length}章`;
+
+    const chaptersEl = $('#review-chapters');
+    chaptersEl.innerHTML = reviews.map(r => `
+      <div class="snap-start shrink-0 w-28 bg-surface border border-border rounded-xl p-3 cursor-pointer
+                  hover:border-cta/30 transition-all btn-press"
+           onclick="openBook('${bookId}')">
+        <p class="text-xs font-medium text-textPrimary truncate">${r.title}</p>
+        <p class="text-[10px] text-textMuted mt-1">Part ${r.track_order}</p>
+      </div>
+    `).join('');
+
+    $('#start-review-btn').onclick = () => openBook(bookId);
+  } catch {}
+}
 
 /* ═══════════════════════════════════════════════════
    Media Session API
@@ -1161,6 +1504,7 @@ function selectUser(userId, userName) {
     const res = await fetch(`/api/books?${userParam()}`);
     const books = await res.json();
     switchView(books.length > 0 ? 'library' : 'convert');
+    if (books.length > 0) loadReviews();
   } catch {
     switchView('convert');
   }

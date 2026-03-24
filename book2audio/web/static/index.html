@@ -896,25 +896,19 @@ audio.addEventListener('ended', () => {
   const book = state.currentBook;
   if (!book) return;
 
-  // Offer quiz for the chapter that just finished
+  const isLastChapter = state.currentChapterIdx >= book.chapters.length - 1;
   const finishedChapter = book.chapters[state.currentChapterIdx];
-  offerQuiz(finishedChapter, state.currentChapterIdx < book.chapters.length - 1);
 
-  if (state.currentChapterIdx < book.chapters.length - 1) {
-    // Will auto-advance after quiz or skip
-  } else {
-    // Last chapter finished
+  if (isLastChapter) {
     state.isPlaying = false;
     $('#icon-play').classList.remove('hidden');
     $('#icon-pause').classList.add('hidden');
     updateProgressRing();
     renderChapterList();
-
-    showModal('周回完了', `<p class="text-sm text-textSecondary">第${book.progress.current_round}周目を聞き終えました。次の周に進みますか？</p>`, [
-      { label: 'あとで', primary: false },
-      { label: '次の周へ', primary: true, action: completeRound },
-    ]);
   }
+
+  // Offer quiz, then advance (or show round complete)
+  offerQuiz(finishedChapter, !isLastChapter, isLastChapter);
 });
 
 // Seek bar
@@ -1018,17 +1012,26 @@ const quizState = {
   hasNextChapter: false,
 };
 
-async function offerQuiz(chapter, hasNext) {
+async function offerQuiz(chapter, hasNext, isLast = false) {
   if (!chapter || !state.currentBookId) return;
+
+  function advanceOrFinish() {
+    if (hasNext) {
+      loadChapter(state.currentChapterIdx + 1);
+      audio.play().catch(() => {});
+    } else if (isLast) {
+      const book = state.currentBook;
+      showModal('周回完了', `<p class="text-sm text-textSecondary">第${book.progress.current_round}周目を聞き終えました。次の周に進みますか？</p>`, [
+        { label: 'あとで', primary: false },
+        { label: '次の周へ', primary: true, action: completeRound },
+      ]);
+    }
+  }
 
   try {
     const res = await fetch(`/api/books/${state.currentBookId}/chapters/${chapter.id}/quiz`);
     const questions = await res.json();
-    if (!questions.length) {
-      // No quiz available, auto-advance
-      if (hasNext) { loadChapter(state.currentChapterIdx + 1); audio.play().catch(() => {}); }
-      return;
-    }
+    if (!questions.length) { advanceOrFinish(); return; }
 
     quizState.questions = questions;
     quizState.currentIdx = 0;
@@ -1036,18 +1039,19 @@ async function offerQuiz(chapter, hasNext) {
     quizState.chapterId = chapter.id;
     quizState.chapterTitle = chapter.title;
     quizState.hasNextChapter = hasNext;
+    quizState.isLastChapter = isLast;
+    quizState.advanceOrFinish = advanceOrFinish;
 
     showModal('クイズに挑戦',
       `<p class="text-sm text-textSecondary">${chapter.title} — ${questions.length}問</p>`,
       [
-        { label: 'スキップ', primary: false, action: () => {
-          if (hasNext) { loadChapter(state.currentChapterIdx + 1); audio.play().catch(() => {}); }
-        }},
+        { label: 'スキップ', primary: false, action: advanceOrFinish },
         { label: 'はじめる', primary: true, action: startQuiz },
       ]
     );
-  } catch {
-    if (hasNext) { loadChapter(state.currentChapterIdx + 1); audio.play().catch(() => {}); }
+  } catch (e) {
+    console.error('Quiz load error:', e);
+    advanceOrFinish();
   }
 }
 
@@ -1180,10 +1184,7 @@ async function showQuizResult() {
 
 $('#result-close-btn').addEventListener('click', () => {
   $('#quiz-overlay').classList.remove('show');
-  if (quizState.hasNextChapter) {
-    loadChapter(state.currentChapterIdx + 1);
-    audio.play().catch(() => {});
-  }
+  if (quizState.advanceOrFinish) quizState.advanceOrFinish();
 });
 
 $('#quiz-close').addEventListener('click', () => {

@@ -3,6 +3,7 @@ services:
     name: book2audio
     runtime: docker
     plan: free
+    rootDir: book2audio
     envVars:
       - key: TURSO_DB_URL
         sync: false

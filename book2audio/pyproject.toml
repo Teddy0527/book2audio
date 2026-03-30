@@ -4,15 +4,12 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "book2audio"
-version = "0.1.0"
-description = "縦書き日本語スキャンPDFをOCR→音声合成でオーディオブックに変換するCLIツール"
+version = "0.3.0"
+description = "テキストをオーディオブックに変換するツール"
 readme = "README.md"
 requires-python = ">=3.11"
 license = {text = "MIT"}
 dependencies = [
-    "pdf2image>=1.16",
-    "Pillow>=10.0",
-    "google-cloud-vision>=3.4",
     "edge-tts>=6.1",
     "pydub>=0.25",
     "click>=8.1",
@@ -21,6 +18,7 @@ dependencies = [
     "fastapi>=0.104",
     "uvicorn[standard]>=0.24",
     "python-multipart>=0.0.6",
+    "httpx>=0.25",
 ]
 
 [project.optional-dependencies]

@@ -1,6 +1,10 @@
 """chapter_splitter モジュールのテスト"""
 
-from book2audio.chapter_splitter import split_chapters, _find_chapter_boundaries
+from book2audio.chapter_splitter import (
+    split_chapters,
+    split_chapters_from_text,
+    _find_chapter_boundaries,
+)
 
 
 class TestFindChapterBoundaries:
@@ -22,6 +26,29 @@ class TestFindChapterBoundaries:
         assert len(boundaries) == 0
 
 
+class TestSplitChaptersFromText:
+    def test_basic_split(self):
+        text = "前書きテキスト\n\n第一章 始まりの章\n物語が始まる。\n\n第二章 展開の章\n物語が展開する。"
+        chapters = split_chapters_from_text(text)
+        assert len(chapters) >= 2
+
+    def test_no_chapters_found(self):
+        text = "普通のテキスト。もっとテキスト。"
+        chapters = split_chapters_from_text(text)
+        assert len(chapters) == 1
+        assert chapters[0]["title"] == "本文"
+
+    def test_empty_input(self):
+        assert split_chapters_from_text("") == []
+        assert split_chapters_from_text("  ") == []
+
+    def test_preamble_included(self):
+        text = "これは前書きです。\n\n第一章 本文\n内容がここにあります。"
+        chapters = split_chapters_from_text(text)
+        assert chapters[0]["title"] == "前書き"
+        assert "第一章" in chapters[1]["title"]
+
+
 class TestSplitChapters:
     def test_basic_split(self):
         pages = [
@@ -40,14 +67,3 @@ class TestSplitChapters:
 
     def test_empty_input(self):
         assert split_chapters([]) == []
-
-    def test_toc_detection(self):
-        pages = [
-            "目次\n第一章...3\n第二章...10",
-            "第一章 はじめに\n内容",
-            "第二章 つづき\n内容2",
-        ]
-        chapters = split_chapters(pages)
-        # 目次ページ自体は除外される
-        for ch in chapters:
-            assert "目次" not in ch["title"]

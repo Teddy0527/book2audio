@@ -1,4 +1,4 @@
-"""Phase 3b: 章分割"""
+"""章分割"""
 
 from __future__ import annotations
 
@@ -25,19 +25,6 @@ CHAPTER_PATTERNS = [
     re.compile(r"^終章", re.MULTILINE),
 ]
 
-# 目次検出キーワード
-TOC_KEYWORDS = ["目次", "もくじ", "CONTENTS", "Contents", "contents"]
-
-
-def _detect_toc_page(pages_text: list[str]) -> int | None:
-    """目次ページのインデックスを返す。見つからなければNone。"""
-    for i, text in enumerate(pages_text):
-        for keyword in TOC_KEYWORDS:
-            if keyword in text:
-                logger.info("目次ページ検出: ページ %d", i + 1)
-                return i
-    return None
-
 
 def _find_chapter_boundaries(full_text: str) -> list[tuple[int, str]]:
     """テキスト内の章タイトルの位置とタイトル文字列を返す。
@@ -61,29 +48,19 @@ def _find_chapter_boundaries(full_text: str) -> list[tuple[int, str]]:
     return boundaries
 
 
-def split_chapters(pages_text: list[str]) -> list[dict]:
-    """ページテキストのリストから章分割する。
+def split_chapters_from_text(text: str) -> list[dict]:
+    """単一テキスト文字列から章分割する。
 
     Args:
-        pages_text: 各ページのテキストのリスト
+        text: 入力テキスト
 
     Returns:
         [{"title": "第1章 ...", "text": "..."}, ...] のリスト
     """
-    if not pages_text:
+    if not text or not text.strip():
         return []
 
-    # 目次ページを検出（目次自体は本文に含めない）
-    toc_index = _detect_toc_page(pages_text)
-
-    # 全ページのテキストを結合（目次ページ以降）
-    start_index = (toc_index + 1) if toc_index is not None else 0
-    content_pages = pages_text[start_index:]
-
-    if not content_pages:
-        content_pages = pages_text
-
-    full_text = "\n\n".join(content_pages)
+    full_text = text.strip()
 
     # 章の境界を検出
     boundaries = _find_chapter_boundaries(full_text)
@@ -109,11 +86,27 @@ def split_chapters(pages_text: list[str]) -> list[dict]:
         else:
             end_pos = len(full_text)
 
-        text = full_text[pos:end_pos].strip()
+        text_segment = full_text[pos:end_pos].strip()
         # タイトル行自体をテキストから除去（重複読み上げ防止）
-        text = text[len(title) :].strip()
+        text_segment = text_segment[len(title) :].strip()
 
-        chapters.append({"title": title, "text": text})
+        chapters.append({"title": title, "text": text_segment})
 
     logger.info("章分割完了: %d 章検出", len(chapters))
     return chapters
+
+
+def split_chapters(pages_text: list[str]) -> list[dict]:
+    """ページテキストのリストから章分割する。
+
+    Args:
+        pages_text: 各ページのテキストのリスト
+
+    Returns:
+        [{"title": "第1章 ...", "text": "..."}, ...] のリスト
+    """
+    if not pages_text:
+        return []
+
+    full_text = "\n\n".join(pages_text)
+    return split_chapters_from_text(full_text)

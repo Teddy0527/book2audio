@@ -1,0 +1,606 @@
+"""データ層 — 書籍・章・リスニング進捗の永続管理（libsql / SQLite互換、マルチユーザー対応）"""
+
+from __future__ import annotations
+
+import os
+from dataclasses import dataclass
+from datetime import datetime, timezone
+from pathlib import Path
+
+
+def _now_iso() -> str:
+    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+@dataclass(frozen=True)
+class BookRow:
+    id: str
+    title: str
+    created_at: str
+    total_duration_sec: float
+    chapter_count: int
+
+
+@dataclass(frozen=True)
+class ChapterRow:
+    id: int
+    book_id: str
+    title: str
+    filename: str
+    track_order: int
+    duration_sec: float
+
+
+@dataclass(frozen=True)
+class ProgressRow:
+    user_id: str
+    book_id: str
+    current_chapter_id: int | None
+    position_sec: float
+    current_round: int
+    updated_at: str
+
+
+@dataclass(frozen=True)
+class HistoryRow:
+    id: int
+    user_id: str
+    book_id: str
+    round_number: int
+    started_at: str
+    completed_at: str | None
+
+
+@dataclass(frozen=True)
+class UserRow:
+    id: str
+    name: str
+
+
+_SCHEMA_STATEMENTS = [
+    """CREATE TABLE IF NOT EXISTS users (
+        id   TEXT PRIMARY KEY,
+        name TEXT NOT NULL
+    )""",
+    """CREATE TABLE IF NOT EXISTS books (
+        id                TEXT PRIMARY KEY,
+        title             TEXT NOT NULL,
+        created_at        TEXT NOT NULL,
+        total_duration_sec REAL NOT NULL DEFAULT 0.0,
+        chapter_count     INTEGER NOT NULL DEFAULT 0
+    )""",
+    """CREATE TABLE IF NOT EXISTS chapters (
+        id          INTEGER PRIMARY KEY AUTOINCREMENT,
+        book_id     TEXT NOT NULL REFERENCES books(id) ON DELETE CASCADE,
+        title       TEXT NOT NULL,
+        filename    TEXT NOT NULL,
+        track_order INTEGER NOT NULL,
+        duration_sec REAL NOT NULL DEFAULT 0.0,
+        UNIQUE(book_id, track_order)
+    )""",
+    """CREATE TABLE IF NOT EXISTS listening_progress (
+        user_id             TEXT NOT NULL REFERENCES users(id),
+        book_id             TEXT NOT NULL REFERENCES books(id) ON DELETE CASCADE,
+        current_chapter_id  INTEGER REFERENCES chapters(id),
+        position_sec        REAL NOT NULL DEFAULT 0.0,
+        current_round       INTEGER NOT NULL DEFAULT 1,
+        updated_at          TEXT NOT NULL,
+        PRIMARY KEY (user_id, book_id)
+    )""",
+    """CREATE TABLE IF NOT EXISTS listening_history (
+        id           INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id      TEXT NOT NULL REFERENCES users(id),
+        book_id      TEXT NOT NULL REFERENCES books(id) ON DELETE CASCADE,
+        round_number INTEGER NOT NULL,
+        started_at   TEXT NOT NULL,
+        completed_at TEXT
+    )""",
+    """CREATE TABLE IF NOT EXISTS quiz_questions (
+        id          INTEGER PRIMARY KEY AUTOINCREMENT,
+        book_id     TEXT NOT NULL REFERENCES books(id) ON DELETE CASCADE,
+        chapter_id  INTEGER NOT NULL REFERENCES chapters(id) ON DELETE CASCADE,
+        question    TEXT NOT NULL,
+        answer      TEXT NOT NULL,
+        difficulty  INTEGER NOT NULL DEFAULT 1
+    )""",
+    """CREATE TABLE IF NOT EXISTS quiz_attempts (
+        id           INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id      TEXT NOT NULL REFERENCES users(id),
+        question_id  INTEGER NOT NULL REFERENCES quiz_questions(id) ON DELETE CASCADE,
+        is_correct   INTEGER NOT NULL DEFAULT 0,
+        attempted_at TEXT NOT NULL
+    )""",
+    """CREATE TABLE IF NOT EXISTS review_schedule (
+        user_id       TEXT NOT NULL REFERENCES users(id),
+        chapter_id    INTEGER NOT NULL REFERENCES chapters(id) ON DELETE CASCADE,
+        next_review   TEXT NOT NULL,
+        interval_days INTEGER NOT NULL DEFAULT 1,
+        ease_factor   REAL NOT NULL DEFAULT 2.5,
+        PRIMARY KEY (user_id, chapter_id)
+    )""",
+    "CREATE INDEX IF NOT EXISTS idx_chapters_book ON chapters(book_id, track_order)",
+    "CREATE INDEX IF NOT EXISTS idx_history_user_book ON listening_history(user_id, book_id, round_number)",
+    "CREATE INDEX IF NOT EXISTS idx_quiz_chapter ON quiz_questions(book_id, chapter_id)",
+    "CREATE INDEX IF NOT EXISTS idx_attempts_user ON quiz_attempts(user_id, question_id)",
+    # Topics table for section-level progress display
+    """CREATE TABLE IF NOT EXISTS topics (
+        id          INTEGER PRIMARY KEY AUTOINCREMENT,
+        book_id     TEXT NOT NULL REFERENCES books(id) ON DELETE CASCADE,
+        chapter_id  INTEGER NOT NULL REFERENCES chapters(id) ON DELETE CASCADE,
+        name        TEXT NOT NULL,
+        start_sec   REAL NOT NULL DEFAULT 0.0,
+        end_sec     REAL NOT NULL DEFAULT 0.0,
+        sort_order  INTEGER NOT NULL DEFAULT 0,
+        UNIQUE(chapter_id, sort_order)
+    )""",
+    "CREATE INDEX IF NOT EXISTS idx_topics_chapter ON topics(chapter_id, sort_order)",
+]
+
+# Migrations that may fail (ALTER TABLE on existing DB)
+_MIGRATIONS = [
+    "ALTER TABLE chapters ADD COLUMN text_char_count INTEGER DEFAULT 0",
+]
+
+
+def _connect():
+    """Turso (libsql) またはローカル SQLite に接続。"""
+    turso_url = os.environ.get("TURSO_DB_URL")
+    if turso_url:
+        import libsql_experimental as libsql
+        return libsql.connect(
+            database=turso_url,
+            auth_token=os.environ.get("TURSO_AUTH_TOKEN", ""),
+        )
+
+    import libsql_experimental as libsql
+    data_dir = Path(os.environ.get("BOOK2AUDIO_DATA_DIR", Path.home() / ".book2audio"))
+    data_dir.mkdir(parents=True, exist_ok=True)
+    return libsql.connect(database=str(data_dir / "book2audio.db"))
+
+
+def _row_to_dict(cursor_description, row) -> dict:
+    if row is None:
+        return None
+    return {desc[0]: val for desc, val in zip(cursor_description, row)}
+
+
+class Database:
+    """マルチユーザー対応 DB ラッパー（libsql / Turso 対応）。"""
+
+    def __init__(self, conn=None) -> None:
+        self._conn = conn or _connect()
+
+    def init_db(self) -> None:
+        for stmt in _SCHEMA_STATEMENTS:
+            self._conn.execute(stmt)
+        # Run migrations (may fail on existing DBs — that's OK)
+        for stmt in _MIGRATIONS:
+            try:
+                self._conn.execute(stmt)
+            except Exception:
+                pass  # Column already exists
+        self._conn.commit()
+
+    def close(self) -> None:
+        self._conn.close()
+
+    def _fetchone(self, sql: str, params: tuple = ()) -> dict | None:
+        cur = self._conn.execute(sql, params)
+        row = cur.fetchone()
+        if row is None:
+            return None
+        return _row_to_dict(cur.description, row)
+
+    def _fetchall(self, sql: str, params: tuple = ()) -> list[dict]:
+        cur = self._conn.execute(sql, params)
+        desc = cur.description
+        return [_row_to_dict(desc, r) for r in cur.fetchall()]
+
+    # ── Users ─────────────────────────────────────────
+
+    def create_user(self, user_id: str, name: str) -> UserRow:
+        self._conn.execute(
+            "INSERT OR IGNORE INTO users (id, name) VALUES (?, ?)",
+            (user_id, name),
+        )
+        self._conn.commit()
+        return UserRow(id=user_id, name=name)
+
+    def list_users(self) -> list[dict]:
+        return self._fetchall("SELECT * FROM users ORDER BY name")
+
+    # ── Books ──────────────────────────────────────────
+
+    def create_book(
+        self,
+        book_id: str,
+        title: str,
+        chapters: list[dict],
+    ) -> BookRow:
+        """書籍 + 章を一括登録（進捗はユーザーが開いた時に作成）。"""
+        now = _now_iso()
+        total_dur = sum(ch["duration_sec"] for ch in chapters)
+
+        self._conn.execute(
+            "INSERT INTO books (id, title, created_at, total_duration_sec, chapter_count) "
+            "VALUES (?, ?, ?, ?, ?)",
+            (book_id, title, now, total_dur, len(chapters)),
+        )
+        for i, ch in enumerate(chapters):
+            self._conn.execute(
+                "INSERT INTO chapters (book_id, title, filename, track_order, duration_sec) "
+                "VALUES (?, ?, ?, ?, ?)",
+                (book_id, ch["title"], ch["filename"], i + 1, ch["duration_sec"]),
+            )
+        self._conn.commit()
+
+        return BookRow(
+            id=book_id,
+            title=title,
+            created_at=now,
+            total_duration_sec=total_dur,
+            chapter_count=len(chapters),
+        )
+
+    def list_books(self, user_id: str) -> list[dict]:
+        """全書籍一覧（ユーザー別進捗サマリー付き）。"""
+        rows = self._fetchall(
+            "SELECT b.id, b.title, b.created_at, b.total_duration_sec, b.chapter_count, "
+            "lp.current_round, lp.updated_at AS last_listened "
+            "FROM books b "
+            "LEFT JOIN listening_progress lp ON b.id = lp.book_id AND lp.user_id = ? "
+            "ORDER BY b.created_at DESC",
+            (user_id,),
+        )
+        for r in rows:
+            r["current_round"] = r["current_round"] or 1
+        return rows
+
+    def get_book(self, book_id: str, user_id: str) -> dict | None:
+        """書籍詳細 + 章一覧 + ユーザー別進捗。"""
+        row = self._fetchone("SELECT * FROM books WHERE id = ?", (book_id,))
+        if row is None:
+            return None
+
+        chapters = self._fetchall(
+            "SELECT * FROM chapters WHERE book_id = ? ORDER BY track_order",
+            (book_id,),
+        )
+
+        progress = self._fetchone(
+            "SELECT * FROM listening_progress WHERE user_id = ? AND book_id = ?",
+            (user_id, book_id),
+        )
+
+        return {
+            "id": row["id"],
+            "title": row["title"],
+            "created_at": row["created_at"],
+            "total_duration_sec": row["total_duration_sec"],
+            "chapter_count": row["chapter_count"],
+            "chapters": [
+                {
+                    "id": ch["id"],
+                    "title": ch["title"],
+                    "filename": ch["filename"],
+                    "track_order": ch["track_order"],
+                    "duration_sec": ch["duration_sec"],
+                }
+                for ch in chapters
+            ],
+            "progress": {
+                "current_chapter_id": progress["current_chapter_id"] if progress else None,
+                "position_sec": progress["position_sec"] if progress else 0.0,
+                "current_round": progress["current_round"] if progress else 1,
+                "updated_at": progress["updated_at"] if progress else None,
+            },
+        }
+
+    def delete_book(self, book_id: str) -> bool:
+        self._conn.execute("DELETE FROM listening_history WHERE book_id = ?", (book_id,))
+        self._conn.execute("DELETE FROM listening_progress WHERE book_id = ?", (book_id,))
+        self._conn.execute("DELETE FROM chapters WHERE book_id = ?", (book_id,))
+        cur = self._conn.execute("DELETE FROM books WHERE id = ?", (book_id,))
+        self._conn.commit()
+        return cur.rowcount > 0
+
+    def update_book_title(self, book_id: str, title: str) -> bool:
+        cur = self._conn.execute(
+            "UPDATE books SET title = ? WHERE id = ?", (title, book_id)
+        )
+        self._conn.commit()
+        return cur.rowcount > 0
+
+    # ── Progress ──────────────────────────────────────
+
+    def ensure_progress(self, user_id: str, book_id: str) -> None:
+        """ユーザーの進捗がなければ初期化。"""
+        existing = self._fetchone(
+            "SELECT 1 FROM listening_progress WHERE user_id = ? AND book_id = ?",
+            (user_id, book_id),
+        )
+        if existing:
+            return
+
+        now = _now_iso()
+        first_ch = self._fetchone(
+            "SELECT id FROM chapters WHERE book_id = ? ORDER BY track_order LIMIT 1",
+            (book_id,),
+        )
+        first_chapter_id = first_ch["id"] if first_ch else None
+
+        self._conn.execute(
+            "INSERT INTO listening_progress "
+            "(user_id, book_id, current_chapter_id, position_sec, current_round, updated_at) "
+            "VALUES (?, ?, ?, 0.0, 1, ?)",
+            (user_id, book_id, first_chapter_id, now),
+        )
+        self._conn.execute(
+            "INSERT INTO listening_history (user_id, book_id, round_number, started_at) "
+            "VALUES (?, ?, 1, ?)",
+            (user_id, book_id, now),
+        )
+        self._conn.commit()
+
+    def get_progress(self, user_id: str, book_id: str) -> ProgressRow | None:
+        row = self._fetchone(
+            "SELECT * FROM listening_progress WHERE user_id = ? AND book_id = ?",
+            (user_id, book_id),
+        )
+        if row is None:
+            return None
+        return ProgressRow(
+            user_id=row["user_id"],
+            book_id=row["book_id"],
+            current_chapter_id=row["current_chapter_id"],
+            position_sec=row["position_sec"],
+            current_round=row["current_round"],
+            updated_at=row["updated_at"],
+        )
+
+    def save_progress(
+        self, user_id: str, book_id: str, chapter_id: int, position_sec: float
+    ) -> bool:
+        now = _now_iso()
+        cur = self._conn.execute(
+            "UPDATE listening_progress "
+            "SET current_chapter_id = ?, position_sec = ?, updated_at = ? "
+            "WHERE user_id = ? AND book_id = ?",
+            (chapter_id, position_sec, now, user_id, book_id),
+        )
+        self._conn.commit()
+        return cur.rowcount > 0
+
+    def advance_round(self, user_id: str, book_id: str) -> int | None:
+        now = _now_iso()
+
+        progress = self.get_progress(user_id, book_id)
+        if progress is None:
+            return None
+
+        current_round = progress.current_round
+        new_round = current_round + 1
+
+        first_ch = self._fetchone(
+            "SELECT id FROM chapters WHERE book_id = ? ORDER BY track_order LIMIT 1",
+            (book_id,),
+        )
+        first_chapter_id = first_ch["id"] if first_ch else None
+
+        self._conn.execute(
+            "UPDATE listening_history SET completed_at = ? "
+            "WHERE user_id = ? AND book_id = ? AND round_number = ? AND completed_at IS NULL",
+            (now, user_id, book_id, current_round),
+        )
+        self._conn.execute(
+            "INSERT INTO listening_history (user_id, book_id, round_number, started_at) "
+            "VALUES (?, ?, ?, ?)",
+            (user_id, book_id, new_round, now),
+        )
+        self._conn.execute(
+            "UPDATE listening_progress "
+            "SET current_chapter_id = ?, position_sec = 0.0, "
+            "    current_round = ?, updated_at = ? "
+            "WHERE user_id = ? AND book_id = ?",
+            (first_chapter_id, new_round, now, user_id, book_id),
+        )
+        self._conn.commit()
+
+        return new_round
+
+    # ── History ───────────────────────────────────────
+
+    def get_history(self, user_id: str, book_id: str) -> list[HistoryRow]:
+        rows = self._fetchall(
+            "SELECT * FROM listening_history "
+            "WHERE user_id = ? AND book_id = ? ORDER BY round_number",
+            (user_id, book_id),
+        )
+        return [
+            HistoryRow(
+                id=r["id"],
+                user_id=r["user_id"],
+                book_id=r["book_id"],
+                round_number=r["round_number"],
+                started_at=r["started_at"],
+                completed_at=r["completed_at"],
+            )
+            for r in rows
+        ]
+
+    # ── Chapters ──────────────────────────────────────
+
+    def get_chapters(self, book_id: str) -> list[ChapterRow]:
+        rows = self._fetchall(
+            "SELECT * FROM chapters WHERE book_id = ? ORDER BY track_order",
+            (book_id,),
+        )
+        return [
+            ChapterRow(
+                id=r["id"],
+                book_id=r["book_id"],
+                title=r["title"],
+                filename=r["filename"],
+                track_order=r["track_order"],
+                duration_sec=r["duration_sec"],
+            )
+            for r in rows
+        ]
+
+    # ── Quiz ──────────────────────────────────────────
+
+    def add_quiz_question(
+        self, book_id: str, chapter_id: int, question: str, answer: str, difficulty: int = 1
+    ) -> int:
+        cur = self._conn.execute(
+            "INSERT INTO quiz_questions (book_id, chapter_id, question, answer, difficulty) "
+            "VALUES (?, ?, ?, ?, ?)",
+            (book_id, chapter_id, question, answer, difficulty),
+        )
+        self._conn.commit()
+        return cur.lastrowid
+
+    def get_quiz_questions(self, chapter_id: int) -> list[dict]:
+        return self._fetchall(
+            "SELECT * FROM quiz_questions WHERE chapter_id = ? ORDER BY difficulty, id",
+            (chapter_id,),
+        )
+
+    def save_quiz_attempt(
+        self, user_id: str, question_id: int, is_correct: bool
+    ) -> None:
+        now = _now_iso()
+        self._conn.execute(
+            "INSERT INTO quiz_attempts (user_id, question_id, is_correct, attempted_at) "
+            "VALUES (?, ?, ?, ?)",
+            (user_id, question_id, 1 if is_correct else 0, now),
+        )
+        self._conn.commit()
+
+    def get_quiz_stats(self, user_id: str, book_id: str) -> list[dict]:
+        """章ごとのクイズ正答率サマリー。"""
+        return self._fetchall(
+            "SELECT c.id AS chapter_id, c.title, c.track_order, "
+            "  COUNT(DISTINCT qq.id) AS total_questions, "
+            "  COUNT(qa.id) AS total_attempts, "
+            "  SUM(CASE WHEN qa.is_correct = 1 THEN 1 ELSE 0 END) AS correct_count "
+            "FROM chapters c "
+            "LEFT JOIN quiz_questions qq ON qq.chapter_id = c.id "
+            "LEFT JOIN quiz_attempts qa ON qa.question_id = qq.id AND qa.user_id = ? "
+            "WHERE c.book_id = ? "
+            "GROUP BY c.id ORDER BY c.track_order",
+            (user_id, book_id),
+        )
+
+    def get_chapter_last_score(self, user_id: str, chapter_id: int) -> dict | None:
+        """直近のクイズ結果（最新のattempt_atグループ）。"""
+        rows = self._fetchall(
+            "SELECT qq.id, qa.is_correct "
+            "FROM quiz_questions qq "
+            "LEFT JOIN quiz_attempts qa ON qa.question_id = qq.id AND qa.user_id = ? "
+            "WHERE qq.chapter_id = ? "
+            "ORDER BY qa.attempted_at DESC",
+            (user_id, chapter_id),
+        )
+        if not rows:
+            return None
+        total = len(rows)
+        correct = sum(1 for r in rows if r.get("is_correct") == 1)
+        return {"total": total, "correct": correct, "pct": round(correct / total * 100) if total else 0}
+
+    # ── Review Schedule (SM-2) ────────────────────────
+
+    def get_due_reviews(self, user_id: str, book_id: str) -> list[dict]:
+        """今日復習すべき章のリスト。"""
+        now = _now_iso()[:10]  # YYYY-MM-DD
+        return self._fetchall(
+            "SELECT rs.*, c.title, c.track_order "
+            "FROM review_schedule rs "
+            "JOIN chapters c ON c.id = rs.chapter_id "
+            "WHERE rs.user_id = ? AND c.book_id = ? AND rs.next_review <= ? "
+            "ORDER BY c.track_order",
+            (user_id, book_id, now),
+        )
+
+    def update_review_schedule(
+        self, user_id: str, chapter_id: int, correct_pct: float
+    ) -> None:
+        """SM-2アルゴリズムで次回復習日を計算・更新。"""
+        from datetime import timedelta
+
+        now = _now_iso()
+        today = now[:10]
+
+        existing = self._fetchone(
+            "SELECT * FROM review_schedule WHERE user_id = ? AND chapter_id = ?",
+            (user_id, chapter_id),
+        )
+
+        if existing:
+            interval = existing["interval_days"]
+            ef = existing["ease_factor"]
+        else:
+            interval = 1
+            ef = 2.5
+
+        # SM-2: quality 0-5 (map correct_pct to 0-5)
+        q = min(5, max(0, round(correct_pct / 100 * 5)))
+
+        if q >= 3:
+            if interval == 1:
+                interval = 1
+            elif interval <= 3:
+                interval = 6
+            else:
+                interval = round(interval * ef)
+        else:
+            interval = 1
+
+        ef = max(1.3, ef + (0.1 - (5 - q) * (0.08 + (5 - q) * 0.02)))
+
+        next_date = (datetime.now(timezone.utc) + timedelta(days=interval)).strftime("%Y-%m-%d")
+
+        if existing:
+            self._conn.execute(
+                "UPDATE review_schedule SET next_review = ?, interval_days = ?, ease_factor = ? "
+                "WHERE user_id = ? AND chapter_id = ?",
+                (next_date, interval, ef, user_id, chapter_id),
+            )
+        else:
+            self._conn.execute(
+                "INSERT INTO review_schedule (user_id, chapter_id, next_review, interval_days, ease_factor) "
+                "VALUES (?, ?, ?, ?, ?)",
+                (user_id, chapter_id, next_date, interval, ef),
+            )
+        self._conn.commit()
+
+    # ── Topics ─────────────────────────────────────────
+
+    def get_topics(self, chapter_id: int) -> list[dict]:
+        return self._fetchall(
+            "SELECT id, book_id, chapter_id, name, start_sec, end_sec, sort_order "
+            "FROM topics WHERE chapter_id = ? ORDER BY sort_order",
+            (chapter_id,),
+        )
+
+    def get_book_topics(self, book_id: str) -> dict[int, list[dict]]:
+        rows = self._fetchall(
+            "SELECT id, book_id, chapter_id, name, start_sec, end_sec, sort_order "
+            "FROM topics WHERE book_id = ? ORDER BY chapter_id, sort_order",
+            (book_id,),
+        )
+        grouped: dict[int, list[dict]] = {}
+        for row in rows:
+            cid = row["chapter_id"]
+            grouped.setdefault(cid, []).append(row)
+        return grouped
+
+    def set_topics(self, chapter_id: int, book_id: str, topics: list[dict]) -> None:
+        self._conn.execute("DELETE FROM topics WHERE chapter_id = ?", (chapter_id,))
+        for i, t in enumerate(topics):
+            self._conn.execute(
+                "INSERT INTO topics (book_id, chapter_id, name, start_sec, end_sec, sort_order) "
+                "VALUES (?, ?, ?, ?, ?, ?)",
+                (book_id, chapter_id, t["name"], t.get("start_sec", 0.0), t.get("end_sec", 0.0), i),
+            )
+        self._conn.commit()

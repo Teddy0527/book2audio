@@ -7,7 +7,7 @@ class TestSplitTextIntoChunks:
     def test_short_text(self):
         chunks = _split_text_into_chunks("短いテキスト。")
         assert len(chunks) == 1
-        assert chunks[0] == "短いテキスト。"
+        assert chunks[0][0] == "短いテキスト。"
 
     def test_empty_text(self):
         chunks = _split_text_into_chunks("")
@@ -22,13 +22,19 @@ class TestSplitTextIntoChunks:
         text = "テスト文。" * 500  # 2500文字
         chunks = _split_text_into_chunks(text, max_size=100)
         assert len(chunks) > 1
-        for chunk in chunks:
-            assert len(chunk) <= 200  # 余裕を持って確認
+        for chunk_text, boundary_type in chunks:
+            assert len(chunk_text) <= 200  # 余裕を持って確認
 
     def test_paragraph_split(self):
         text = "段落1。" * 50 + "\n\n" + "段落2。" * 50
         chunks = _split_text_into_chunks(text, max_size=200)
         assert len(chunks) >= 2
+
+    def test_returns_boundary_type(self):
+        text = "段落1。" * 50 + "\n\n" + "段落2。" * 50
+        chunks = _split_text_into_chunks(text, max_size=200)
+        for chunk_text, boundary_type in chunks:
+            assert boundary_type in ("paragraph", "sentence")
 
 
 class TestSanitizeFilename:

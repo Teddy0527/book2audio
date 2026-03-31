@@ -346,32 +346,8 @@ tailwind.config = {
       </div>
     </header>
 
-    <!-- Concept Visuals Carousel -->
-    <div id="visuals-section" class="hidden mb-4">
-      <div class="flex items-center gap-2 mb-2">
-        <svg class="w-4 h-4 text-cta" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5">
-          <path stroke-linecap="round" stroke-linejoin="round" d="M2.036 12.322a1.012 1.012 0 010-.639C3.423 7.51 7.36 4.5 12 4.5c4.64 0 8.577 3.007 9.963 7.178.07.207.07.431 0 .639C20.577 16.49 16.64 19.5 12 19.5c-4.64 0-8.577-3.007-9.963-7.178z"/>
-          <path stroke-linecap="round" stroke-linejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/>
-        </svg>
-        <span class="text-xs font-medium text-cta">この章のポイント</span>
-      </div>
-      <div id="visuals-carousel" class="flex gap-3 overflow-x-auto pb-2 snap-x snap-mandatory -mx-4 px-4"></div>
-    </div>
-
-    <!-- Fullscreen Visual Modal -->
-    <div id="visual-modal" class="hidden fixed inset-0 z-[85] bg-bg/95 backdrop-blur-sm flex flex-col"
-         onclick="if(event.target===this)closeVisualModal()">
-      <div class="flex items-center justify-between px-4 pt-4 pb-2">
-        <p id="visual-modal-title" class="text-sm font-medium text-cta"></p>
-        <button onclick="closeVisualModal()" class="min-w-[44px] min-h-[44px] flex items-center justify-center text-textMuted hover:text-textPrimary cursor-pointer" aria-label="閉じる">
-          <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12"/></svg>
-        </button>
-      </div>
-      <div id="visual-modal-content" class="flex-1 overflow-auto px-4 pb-8"></div>
-    </div>
-
     <!-- Chapter List -->
-    <div id="player-chapters" class="space-y-1 max-h-[45vh] overflow-y-auto pr-1 pb-4"></div>
+    <div id="player-chapters" class="space-y-1 max-h-[55vh] overflow-y-auto pr-1 pb-4"></div>
 
     <!-- Round Complete Button -->
     <button id="btn-complete-round"
@@ -480,7 +456,6 @@ tailwind.config = {
 </nav>
 
 <!-- Hidden Audio Element -->
-<script src="/static/diagrams.js"></script>
 <audio id="audio-el" preload="metadata"></audio>
 
 <script>
@@ -793,71 +768,6 @@ function renderPlayer() {
 
   updateProgressRing();
   renderChapterList();
-  renderVisuals();
-}
-
-function renderVisuals() {
-  const book = state.currentBook;
-  if (!book || typeof CHAPTER_VISUALS === 'undefined') {
-    $('#visuals-section').classList.add('hidden');
-    return;
-  }
-
-  // Find which chapter keyword matches the current chapter
-  const ch = book.chapters[state.currentChapterIdx];
-  if (!ch) return;
-
-  // Extract chapter key (e.g. "第1章" from "第1章 業界の構造分析法 Part01")
-  const match = ch.title.match(/第\d章/);
-  const chapterKey = match ? match[0] : null;
-  if (!chapterKey || !CHAPTER_VISUALS[chapterKey]) {
-    $('#visuals-section').classList.add('hidden');
-    return;
-  }
-
-  const visuals = CHAPTER_VISUALS[chapterKey];
-  const section = $('#visuals-section');
-  const carousel = $('#visuals-carousel');
-
-  section.classList.remove('hidden');
-  carousel.innerHTML = '';
-
-  visuals.forEach((v, i) => {
-    const card = document.createElement('div');
-    card.className = 'snap-start shrink-0 w-[280px] bg-surface border border-border rounded-2xl p-4 cursor-pointer hover:border-cta/30 transition-all';
-    card.style.animationDelay = `${i * 0.1}s`;
-    card.classList.add('stagger-in');
-
-    const titleEl = document.createElement('p');
-    titleEl.className = 'text-xs font-medium text-cta mb-3';
-    titleEl.textContent = v.title;
-    card.appendChild(titleEl);
-
-    const content = document.createElement('div');
-    content.className = 'overflow-hidden';
-    v.render(content);
-    card.appendChild(content);
-
-    // Click to expand
-    card.addEventListener('click', () => openVisualModal(v));
-    carousel.appendChild(card);
-  });
-}
-
-function openVisualModal(visual) {
-  const modal = $('#visual-modal');
-  const content = $('#visual-modal-content');
-  $('#visual-modal-title').textContent = visual.title;
-  content.innerHTML = '';
-  visual.render(content);
-  // Scale up SVGs in modal
-  const svgs = content.querySelectorAll('svg');
-  svgs.forEach(s => { s.style.width = '100%'; s.style.height = 'auto'; });
-  modal.classList.remove('hidden');
-}
-
-function closeVisualModal() {
-  $('#visual-modal').classList.add('hidden');
 }
 
 function renderChapterList() {

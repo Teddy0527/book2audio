@@ -1,0 +1,33 @@
+name: keepalive
+
+# Render 無料プランは無アクセスでスリープし、次回アクセス時の起動に数十秒かかる。
+# 日中帯に定期的に /healthz を叩いてサーバーを起こしておき、コールドスタートを防ぐ。
+#
+# 設定: リポジトリの Settings → Secrets and variables → Actions → Variables に
+#   APP_URL = https://<あなたの本番ホスト>   (例: https://book2audio.onrender.com)
+# を登録する。未設定の場合は下のデフォルトURLが使われる。
+
+on:
+  schedule:
+    # UTC基準。日本時間 7:00〜24:00 頃をカバー（10分間隔）。
+    - cron: "*/10 22-23,0-15 * * *"
+  workflow_dispatch:
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Ping /healthz
+        run: |
+          URL="${{ vars.APP_URL }}"
+          if [ -z "$URL" ]; then
+            URL="https://book2audio.onrender.com"
+          fi
+          echo "Pinging $URL/healthz"
+          for i in 1 2 3; do
+            code=$(curl -s -o /dev/null -w "%{http_code}" --max-time 60 "$URL/healthz" || echo "000")
+            echo "Attempt $i -> HTTP $code"
+            if [ "$code" = "200" ]; then exit 0; fi
+            sleep 15
+          done
+          echo "Server did not respond OK (last code: $code), but keepalive still woke it."

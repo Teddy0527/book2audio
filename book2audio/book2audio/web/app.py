@@ -9,7 +9,8 @@ import uuid
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import FastAPI, Form, UploadFile
+from fastapi import FastAPI, Form, Request, UploadFile
+from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import (
     FileResponse, HTMLResponse, RedirectResponse, Response, StreamingResponse,
 )
@@ -42,17 +43,40 @@ async def lifespan(application: FastAPI):
 
 app = FastAPI(title="book2audio", lifespan=lifespan)
 
+# レスポンス圧縮（HTML/CSS/JS/JSON をgzipで転送、モバイル回線で効果大）
+app.add_middleware(GZipMiddleware, minimum_size=500)
+
 STATIC_DIR = Path(__file__).parent / "static"
 
 # Static files mount (icons, manifest, etc.)
 app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 
 
+@app.middleware("http")
+async def add_static_cache_headers(request: Request, call_next):
+    """ビルド済み静的アセットに長期キャッシュを付与（?v= でバージョン破棄）。
+
+    内容が変わる index.html / sw.js は対象外（それぞれ no-cache を維持）。
+    """
+    response = await call_next(request)
+    path = request.url.path
+    if path.startswith("/static/") and not path.endswith((".html", "sw.js")):
+        response.headers["Cache-Control"] = "public, max-age=31536000, immutable"
+    return response
+
+
+@app.get("/healthz")
+async def healthz():
+    """コールドスタート対策の定期ping用。DBアクセスなしで軽量に応答。"""
+    return {"ok": True}
+
+
 # ── 既存エンドポイント ────────────────────────────────
 
 @app.get("/", response_class=HTMLResponse)
 async def index():
-    return (STATIC_DIR / "index.html").read_text(encoding="utf-8")
+    html = (STATIC_DIR / "index.html").read_text(encoding="utf-8")
+    return HTMLResponse(content=html, headers={"Cache-Control": "no-cache"})
 
 
 @app.get("/sw.js")

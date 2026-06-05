@@ -10,36 +10,7 @@
 <link rel="manifest" href="/static/manifest.json">
 <link rel="apple-touch-icon" href="/static/icons/icon-180x180.png">
 <link rel="icon" type="image/png" sizes="192x192" href="/static/icons/icon-192x192.png">
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link href="https://fonts.googleapis.com/css2?family=Noto+Sans+JP:wght@300;400;500;700&family=Noto+Serif+JP:wght@500;700&display=swap" rel="stylesheet">
-<script src="https://cdn.tailwindcss.com"></script>
-<script>
-tailwind.config = {
-  theme: {
-    extend: {
-      colors: {
-        bg: '#0A0A0A',
-        surface: '#141414',
-        surfaceHover: '#1A1A1A',
-        border: '#262626',
-        borderLight: '#333333',
-        cta: '#D4AF37',
-        ctaHover: '#E8C84A',
-        ctaDim: 'rgba(212,175,55,0.15)',
-        textPrimary: '#F5F5F5',
-        textSecondary: '#A3A3A3',
-        textMuted: '#6B6B6B',
-        success: '#22C55E',
-        error: '#EF4444',
-      },
-      fontFamily: {
-        serif: ['Noto Serif JP', 'serif'],
-        sans: ['Noto Sans JP', 'sans-serif'],
-      },
-    }
-  }
-}
-</script>
+<link rel="stylesheet" href="/static/app.css?v=1">
 <style>
   /* Loading screen — renders before any JS/CDN loads */
   #loading-screen {
@@ -50,7 +21,7 @@ tailwind.config = {
     transition: opacity 0.3s ease;
   }
   #loading-screen .title {
-    font-family: 'Noto Serif JP', serif;
+    font-family: "Hiragino Mincho ProN", "Yu Mincho", YuMincho, "Noto Serif JP", serif;
     font-size: 1.5rem; font-weight: 700;
     color: #D4AF37;
   }
